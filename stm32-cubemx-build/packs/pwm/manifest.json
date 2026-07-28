@@ -1,0 +1,29 @@
+{
+  "schema_version": 4,
+  "id": "pwm",
+  "summary": "Configure one evidence-backed timer PWM output and create a duty-cycle module.",
+  "requires": [
+    "A validated board profile whose MCU matches the new project and has a cited timer-clock constraint when a frequency is requested.",
+    "One manual-evidenced, available output pin and any load, level, or safety constraint for that pin.",
+    "The selected MCU's local CubeMX timer mode/configuration XML for the exact PWM channel, pin signal, prescaler, period, and pulse parameters."
+  ],
+  "templates": [
+    "templates/pwm_output.h.tmpl",
+    "templates/pwm_output.c.tmpl"
+  ],
+  "plan_resources": {
+    "operation_instance_prefixes": [
+      "TIM",
+      "LPTIM"
+    ],
+    "direct_pin_signals": [],
+    "required_operation_signal_suffixes": [],
+    "minimum_operation_pins": 1
+  },
+  "ioc_override_kinds": [],
+  "verifications": [
+    "Verify the generated .ioc selects the planned timer channel and output pin.",
+    "Verify generated main.c initializes the intended timer instance and PWM channel parameters.",
+    "Compile the project after module integration."
+  ]
+}

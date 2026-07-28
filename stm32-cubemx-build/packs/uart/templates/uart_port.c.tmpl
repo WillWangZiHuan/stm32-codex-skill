@@ -1,0 +1,43 @@
+#include "{{MODULE_NAME}}.h"
+
+#include <stddef.h>
+
+extern UART_HandleTypeDef {{UART_HANDLE}};
+
+void {{MODULE_NAME}}_init(void)
+{
+  /* The CubeMX-generated MX_USART*_UART_Init() call runs before this App hook. */
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+  /* Keep this hook non-blocking; use the explicit send/receive APIs elsewhere. */
+}
+
+HAL_StatusTypeDef {{MODULE_NAME}}_transmit(
+    uint8_t *data,
+    uint16_t length,
+    uint32_t timeout_ms)
+{
+  if (length == 0U) {
+    return HAL_OK;
+  }
+  if (data == NULL) {
+    return HAL_ERROR;
+  }
+  return HAL_UART_Transmit(&{{UART_HANDLE}}, data, length, timeout_ms);
+}
+
+HAL_StatusTypeDef {{MODULE_NAME}}_receive(
+    uint8_t *data,
+    uint16_t length,
+    uint32_t timeout_ms)
+{
+  if (length == 0U) {
+    return HAL_OK;
+  }
+  if (data == NULL) {
+    return HAL_ERROR;
+  }
+  return HAL_UART_Receive(&{{UART_HANDLE}}, data, length, timeout_ms);
+}

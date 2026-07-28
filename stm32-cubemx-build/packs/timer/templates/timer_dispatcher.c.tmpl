@@ -1,0 +1,47 @@
+#include "{{MODULE_NAME}}.h"
+
+extern TIM_HandleTypeDef {{TIM_HANDLE}};
+
+static volatile uint32_t pending_ticks;
+
+void {{MODULE_NAME}}_init(void)
+{
+  if (HAL_TIM_Base_Start_IT(&{{TIM_HANDLE}}) != HAL_OK) {
+    Error_Handler();
+  }
+  HAL_NVIC_EnableIRQ({{IRQ_NAME}});
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+  /* Consume {{MODULE_NAME}}_take_ticks() here without blocking the main loop. */
+}
+
+bool {{MODULE_NAME}}_on_period_elapsed(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance != {{TIM_HANDLE}}.Instance) {
+    return false;
+  }
+  pending_ticks++;
+  return true;
+}
+
+uint32_t {{MODULE_NAME}}_take_ticks(void)
+{
+  uint32_t ticks;
+  uint32_t primask;
+
+  primask = __get_PRIMASK();
+  __disable_irq();
+  ticks = pending_ticks;
+  pending_ticks = 0U;
+  if (primask == 0U) {
+    __enable_irq();
+  }
+  return ticks;
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  (void){{MODULE_NAME}}_on_period_elapsed(htim);
+}

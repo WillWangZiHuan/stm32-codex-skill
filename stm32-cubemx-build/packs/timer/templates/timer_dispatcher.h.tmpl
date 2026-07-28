@@ -1,0 +1,14 @@
+#ifndef CODEX_APP_{{MODULE_GUARD}}_H
+#define CODEX_APP_{{MODULE_GUARD}}_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "main.h"
+
+void {{MODULE_NAME}}_init(void);
+void {{MODULE_NAME}}_process(void);
+bool {{MODULE_NAME}}_on_period_elapsed(TIM_HandleTypeDef *htim);
+uint32_t {{MODULE_NAME}}_take_ticks(void);
+
+#endif /* CODEX_APP_{{MODULE_GUARD}}_H */

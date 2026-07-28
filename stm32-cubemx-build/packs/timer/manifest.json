@@ -1,0 +1,31 @@
+{
+  "schema_version": 4,
+  "id": "timer",
+  "summary": "Configure one base timer and provide a non-blocking periodic-dispatch module.",
+  "requires": [
+    "A validated board profile whose MCU matches the new project and has a cited timing constraint for a requested period.",
+    "The selected MCU's local CubeMX timer mode/configuration XML for the exact base-timer mode, prescaler, period, and interrupt setting.",
+    "A single identified owner for HAL_TIM_PeriodElapsedCallback so a second callback implementation is never generated."
+  ],
+  "templates": [
+    "templates/timer_dispatcher.h.tmpl",
+    "templates/timer_dispatcher.c.tmpl"
+  ],
+  "plan_resources": {
+    "operation_instance_prefixes": [
+      "TIM",
+      "LPTIM"
+    ],
+    "direct_pin_signals": [],
+    "required_operation_signal_suffixes": [],
+    "minimum_operation_pins": 0
+  },
+  "ioc_override_kinds": [
+    "timer-nvic-enable"
+  ],
+  "verifications": [
+    "Verify generated main.c initializes the intended timer with the approved prescaler and period.",
+    "Verify the CubeMX interrupt source and NVIC setting are present before adding an application callback route.",
+    "Compile the project after module integration."
+  ]
+}

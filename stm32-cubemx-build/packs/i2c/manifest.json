@@ -1,0 +1,31 @@
+{
+  "schema_version": 4,
+  "id": "i2c",
+  "summary": "Configure one evidence-backed I2C bus and create a HAL bus module.",
+  "requires": [
+    "A validated board profile whose MCU matches the new project.",
+    "Two manual-evidenced, available board pins for SCL and SDA, including electrical pull-up constraints.",
+    "The selected MCU's local CubeMX database for the exact I2C instance, mode, pin signals, and speed parameters."
+  ],
+  "templates": [
+    "templates/i2c_bus.h.tmpl",
+    "templates/i2c_bus.c.tmpl"
+  ],
+  "plan_resources": {
+    "operation_instance_prefixes": [
+      "I2C"
+    ],
+    "direct_pin_signals": [],
+    "required_operation_signal_suffixes": [
+      "SCL",
+      "SDA"
+    ],
+    "minimum_operation_pins": 2
+  },
+  "ioc_override_kinds": [],
+  "verifications": [
+    "Verify the generated .ioc names the selected SCL and SDA signals.",
+    "Verify generated main.c contains the requested I2C handle, initializer, and requested clock speed before writing HAL calls.",
+    "Compile the project after module integration."
+  ]
+}

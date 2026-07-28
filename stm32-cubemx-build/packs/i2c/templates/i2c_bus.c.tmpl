@@ -1,0 +1,30 @@
+#include "{{MODULE_NAME}}.h"
+
+extern I2C_HandleTypeDef {{I2C_HANDLE}};
+
+void {{MODULE_NAME}}_init(void)
+{
+  /* The CubeMX-generated MX_I2C*_Init() call runs before this App hook. */
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+  /* Add one non-blocking application step here. */
+}
+
+HAL_StatusTypeDef {{MODULE_NAME}}_mem_read(
+    uint16_t device_address_8bit,
+    uint16_t register_address,
+    uint8_t *data,
+    uint16_t length,
+    uint32_t timeout_ms)
+{
+  return HAL_I2C_Mem_Read(
+      &{{I2C_HANDLE}},
+      device_address_8bit,
+      register_address,
+      I2C_MEMADD_SIZE_8BIT,
+      data,
+      length,
+      timeout_ms);
+}

@@ -1,0 +1,24 @@
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+
+# User-owned inputs and generated STM32 projects
+*.pdf
+*.manual-index.json
+*.ioc
+*.elf
+*.bin
+*.hex
+*.map
+build/
+Debug/
+Release/
+MXTmpFiles/

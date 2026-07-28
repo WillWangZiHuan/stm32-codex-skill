@@ -1,0 +1,29 @@
+{
+  "schema_version": 4,
+  "id": "spi",
+  "summary": "Configure one evidence-backed SPI master bus and create an explicit full-duplex HAL transfer module.",
+  "requires": [
+    "A validated board profile whose MCU matches the new project.",
+    "Three manual-evidenced, available board pins for SCK, MISO, and MOSI, including voltage, attached-device, routing, and reservation constraints.",
+    "A cited target-device requirement for SPI clock polarity/phase, maximum clock rate, bit order, frame size, and chip-select strategy; do not infer them from a board name.",
+    "The selected MCU's local CubeMX SPI mode XML for the exact instance, Full_Duplex_Master mode, SCK/MISO/MOSI signals, and approved parameters."
+  ],
+  "templates": [
+    "templates/spi_bus.h.tmpl",
+    "templates/spi_bus.c.tmpl"
+  ],
+  "plan_resources": {
+    "operation_instance_prefixes": [
+      "SPI"
+    ],
+    "direct_pin_signals": [],
+    "required_operation_signal_suffixes": [],
+    "minimum_operation_pins": 0
+  },
+  "ioc_override_kinds": [],
+  "verifications": [
+    "Verify the generated .ioc assigns the planned SCK, MISO, and MOSI signals.",
+    "Verify generated main.c initializes the intended SPI handle with the approved master, clock polarity/phase, prescaler, data-size, and NSS settings.",
+    "Compile the project after module integration."
+  ]
+}

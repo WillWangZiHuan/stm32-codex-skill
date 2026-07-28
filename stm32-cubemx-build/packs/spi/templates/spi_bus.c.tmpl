@@ -1,0 +1,30 @@
+#include "{{MODULE_NAME}}.h"
+
+#include <stddef.h>
+
+extern SPI_HandleTypeDef {{SPI_HANDLE}};
+
+void {{MODULE_NAME}}_init(void)
+{
+  /* The CubeMX-generated MX_SPI*_Init() call runs before this App hook. */
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+  /* Keep this hook non-blocking; use the explicit transfer API elsewhere. */
+}
+
+HAL_StatusTypeDef {{MODULE_NAME}}_transfer(
+    uint8_t *tx_data,
+    uint8_t *rx_data,
+    uint16_t length,
+    uint32_t timeout_ms)
+{
+  if (length == 0U) {
+    return HAL_OK;
+  }
+  if (tx_data == NULL || rx_data == NULL) {
+    return HAL_ERROR;
+  }
+  return HAL_SPI_TransmitReceive(&{{SPI_HANDLE}}, tx_data, rx_data, length, timeout_ms);
+}

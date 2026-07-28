@@ -1,0 +1,21 @@
+#include "{{MODULE_NAME}}.h"
+
+void {{MODULE_NAME}}_init(void)
+{
+  /* The CubeMX-generated MX_GPIO_Init() call runs before this App hook. */
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+  /* Keep this hook non-blocking; write only when application logic decides. */
+}
+
+void {{MODULE_NAME}}_write(GPIO_PinState state)
+{
+  HAL_GPIO_WritePin({{GPIO_PORT}}, {{GPIO_PIN}}, state);
+}
+
+void {{MODULE_NAME}}_toggle(void)
+{
+  HAL_GPIO_TogglePin({{GPIO_PORT}}, {{GPIO_PIN}});
+}

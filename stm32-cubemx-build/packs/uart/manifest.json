@@ -1,0 +1,30 @@
+{
+  "schema_version": 4,
+  "id": "uart",
+  "summary": "Configure one evidence-backed asynchronous UART and create an explicit HAL send/receive module.",
+  "requires": [
+    "A validated board profile whose MCU matches the new project.",
+    "Two manual-evidenced, available board pins for TX and RX, including the board-side voltage, transceiver, USB bridge, or external-adapter constraint.",
+    "The selected MCU's local CubeMX USART/UART mode XML for the exact instance, Asynchronous mode, TX/RX signals, baud rate, framing, and flow-control parameters."
+  ],
+  "templates": [
+    "templates/uart_port.h.tmpl",
+    "templates/uart_port.c.tmpl"
+  ],
+  "plan_resources": {
+    "operation_instance_prefixes": [
+      "USART",
+      "UART",
+      "LPUART"
+    ],
+    "direct_pin_signals": [],
+    "required_operation_signal_suffixes": [],
+    "minimum_operation_pins": 0
+  },
+  "ioc_override_kinds": [],
+  "verifications": [
+    "Verify the generated .ioc assigns the planned TX and RX signals.",
+    "Verify generated main.c initializes the intended UART handle with the approved baud rate and asynchronous TX/RX mode.",
+    "Compile the project after module integration."
+  ]
+}
