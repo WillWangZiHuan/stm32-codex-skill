@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "id": "gpio",
   "summary": "Configure one evidence-backed push-pull GPIO output and create an explicit HAL write/toggle module.",
   "requires": [
@@ -12,6 +12,7 @@
     "templates/gpio_output.h.tmpl",
     "templates/gpio_output.c.tmpl"
   ],
+  "binding_types": {"GPIO_PORT": "identifier", "GPIO_PIN": "identifier"},
   "plan_resources": {
     "operation_instance_prefixes": [],
     "direct_pin_signals": [

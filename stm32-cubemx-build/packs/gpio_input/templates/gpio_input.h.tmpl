@@ -1,0 +1,16 @@
+#ifndef CODEX_APP_{{MODULE_GUARD}}_H
+#define CODEX_APP_{{MODULE_GUARD}}_H
+
+#include <stdbool.h>
+
+#include "main.h"
+
+void {{MODULE_NAME}}_init(void);
+void {{MODULE_NAME}}_process(void);
+void {{MODULE_NAME}}_notify_exti(void);
+bool {{MODULE_NAME}}_is_active(void);
+bool {{MODULE_NAME}}_take_pressed(void);
+bool {{MODULE_NAME}}_take_released(void);
+bool {{MODULE_NAME}}_take_long_press(void);
+
+#endif /* CODEX_APP_{{MODULE_GUARD}}_H */

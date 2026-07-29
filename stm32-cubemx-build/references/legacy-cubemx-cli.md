@@ -31,6 +31,7 @@ project setup:
 
 ```text
 set mode I2C1 I2C
+set mode SYS "Serial Wire"
 set pin PB8 I2C1_SCL
 set ip parameters I2C1 I2C_Mode I2C_Fast
 set ip parameters I2C1 ClockSpeed 400000
@@ -43,6 +44,10 @@ to the configuration plan. Quote values containing spaces, for example:
 ```text
 set mode TIM3 "PWM Generation1 CH1"
 ```
+
+Every generated project sets `SYS` to `Serial Wire`. The post-generation audit
+accepts `SYS.Debug=Serial Wire` or CubeMX's STM32F1 PA13/PA14 Serial-Wire pin
+records and rejects active generated calls to `__HAL_AFIO_REMAP_SWJ_DISABLE`.
 
 ## GPIO output workflow
 

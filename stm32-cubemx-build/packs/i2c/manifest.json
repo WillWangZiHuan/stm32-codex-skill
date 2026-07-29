@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "id": "i2c",
   "summary": "Configure one evidence-backed I2C bus and create a HAL bus module.",
   "requires": [
@@ -11,6 +11,7 @@
     "templates/i2c_bus.h.tmpl",
     "templates/i2c_bus.c.tmpl"
   ],
+  "binding_types": {"I2C_HANDLE": "identifier"},
   "plan_resources": {
     "operation_instance_prefixes": [
       "I2C"

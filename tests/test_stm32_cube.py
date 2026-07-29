@@ -37,7 +37,7 @@ class CubeScriptTests(unittest.TestCase):
     @staticmethod
     def board_profile() -> dict[str, object]:
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "board": {
                 "name": "F401 reference board",
                 "manual": {"path": "reference.pdf", "sha256": "a" * 64},
@@ -50,15 +50,39 @@ class CubeScriptTests(unittest.TestCase):
                 {
                     "pin": "PB8",
                     "board_signal": "SCL",
+                    "silkscreen": "SCL",
+                    "connector": "J2.3",
+                    "position_note": "Expansion header",
+                    "manual_figure": "Figure 2",
+                    "shared_with": [],
                     "status": "available",
                     "electrical_constraints": ["pull-up present"],
+                    "electrical": {
+                        "power_domain": "3V3",
+                        "logic_voltage_v": 3.3,
+                        "max_current_ma": 8,
+                        "external_supply_required": False,
+                        "conflicts": [],
+                    },
                     "evidence": [{"page": 2, "anchor": "PB8 SCL wiring", "claim": "SCL wiring"}],
                 },
                 {
                     "pin": "PB9",
                     "board_signal": "SDA",
+                    "silkscreen": "SDA",
+                    "connector": "J2.4",
+                    "position_note": "Expansion header",
+                    "manual_figure": "Figure 2",
+                    "shared_with": [],
                     "status": "available",
                     "electrical_constraints": ["pull-up present"],
+                    "electrical": {
+                        "power_domain": "3V3",
+                        "logic_voltage_v": 3.3,
+                        "max_current_ma": 8,
+                        "external_supply_required": False,
+                        "conflicts": [],
+                    },
                     "evidence": [{"page": 2, "anchor": "PB9 SDA wiring", "claim": "SDA wiring"}],
                 },
             ],
@@ -115,6 +139,11 @@ class CubeScriptTests(unittest.TestCase):
             "plan_sha256": "b" * 64,
             "packs": packs,
             "modules": modules or [],
+            "safety": {
+                "acknowledged_conflicts": [],
+                "external_supply_pins": [],
+                "connections": [],
+            },
         }
         return stm32_cube.write_project_provenance(
             project_dir,
@@ -128,6 +157,19 @@ class CubeScriptTests(unittest.TestCase):
         self.assertEqual(stm32_cube.validated_mcu_identifier("STM32F103C(8-B)Tx"), "STM32F103C(8-B)Tx")
         self.assertTrue(stm32_cube.cubemx_refname_matches_mcu("STM32F401R(D-E)Tx", "STM32F401RETx"))
         self.assertTrue(stm32_cube.cubemx_refname_matches_mcu("STM32X(G-E)Tx", "STM32XFTx"))
+        self.assertTrue(stm32_cube.cubemx_refname_matches_mcu("STM32F103Z(C-D-E)Tx", "STM32F103ZETx"))
+        self.assertFalse(stm32_cube.cubemx_refname_matches_mcu("STM32F103Z(C-D-E)Tx", "STM32F103ZFTx"))
+
+    def test_families_index_resolves_concrete_f103_part_without_database_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database = Path(temporary_directory)
+            (database / "families.xml").write_text(
+                '<Families><Mcu Name="STM32F103Z(C-D-E)Tx" RefName="STM32F103ZETx" RPN="STM32F103ZE"/></Families>',
+                encoding="utf-8",
+            )
+            expected = database / "STM32F103Z(C-D-E)Tx.xml"
+            expected.write_text('<Mcu RefName="STM32F103Z(C-D-E)Tx"/>', encoding="utf-8")
+            self.assertEqual(stm32_cube.cubemx_mcu_description_path(database, "STM32F103ZETx"), expected)
 
     def test_mcu_identifier_blocks_command_injection(self) -> None:
         with self.assertRaises(ValueError):
@@ -257,6 +299,71 @@ class CubeScriptTests(unittest.TestCase):
         self.assertIn(f"project path {stm32_cube.cube_quote(output_directory)}", script)
         self.assertIn('project toolchain "Makefile"', script)
         self.assertNotIn(f"project path {stm32_cube.cube_quote(output_directory / 'demo')}", script)
+        self.assertIn("set mode SYS \"Serial Wire\"", script)
+
+    def test_project_name_error_includes_stable_normalized_suggestion(self) -> None:
+        self.assertEqual(stm32_cube.suggested_project_name("02 key buzzer"), "project_02_key_buzzer")
+        with self.assertRaisesRegex(ValueError, "Suggested name: project_02_key_buzzer"):
+            stm32_cube.validated_project_name("02 key buzzer")
+
+    def test_temporary_script_cleanup_retries_without_changing_generation_status(self) -> None:
+        path = Path("occupied.mxscript")
+        with (
+            mock.patch.object(Path, "unlink", side_effect=[PermissionError("busy"), PermissionError("busy"), None]) as unlink,
+            mock.patch.object(stm32_cube.time, "sleep") as sleep,
+        ):
+            self.assertIsNone(stm32_cube.cleanup_temporary_file(path, delays=(0.1, 0.2)))
+        self.assertEqual(unlink.call_count, 3)
+        sleep.assert_has_calls([mock.call(0.1), mock.call(0.2)])
+
+    def test_cubemx_generation_has_a_bounded_timeout_and_cleans_its_script(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            toolchain = stm32_cube.Toolchain(
+                platform="Darwin",
+                cubemx="/Applications/STM32CubeMX",
+                cubeide=None,
+                gcc=None,
+                make=None,
+                cmake=None,
+                ninja=None,
+                pypdf="test",
+            )
+            with mock.patch.object(
+                stm32_cube.subprocess,
+                "run",
+                side_effect=stm32_cube.subprocess.TimeoutExpired(["cubemx"], 7),
+            ) as run:
+                with self.assertRaises(stm32_cube.subprocess.TimeoutExpired):
+                    stm32_cube.run_cubemx_quiet_script(toolchain, output_dir, "demo", "exit\n", 7)
+            self.assertEqual(list(output_dir.glob("*.mxscript")), [])
+        self.assertEqual(run.call_args.kwargs["timeout"], 7)
+
+    def test_debug_audit_requires_serial_wire_and_rejects_swj_disable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project_dir = Path(temporary_directory)
+            (project_dir / "demo.ioc").write_text("SYS.Debug=Serial Wire\n", encoding="utf-8")
+            source = project_dir / "Src" / "stm32f1xx_hal_msp.c"
+            source.parent.mkdir(parents=True)
+            source.write_text("void HAL_MspInit(void) {}\n", encoding="utf-8")
+            self.assertEqual(stm32_cube.debug_configuration_failures(project_dir), [])
+            source.write_text(
+                "void HAL_MspInit(void) { __HAL_AFIO_REMAP_SWJ_DISABLE(); }\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                stm32_cube.debug_configuration_failures(project_dir),
+                ["Src/stm32f1xx_hal_msp.c disables Serial Wire with SWJ_DISABLE"],
+            )
+            source.write_text("void HAL_MspInit(void) {}\n", encoding="utf-8")
+            (project_dir / "demo.ioc").write_text(
+                "PA13.Mode=Serial_Wire\n"
+                "PA13.Signal=SYS_JTMS-SWDIO\n"
+                "PA14.Mode=Serial_Wire\n"
+                "PA14.Signal=SYS_JTCK-SWCLK\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(stm32_cube.debug_configuration_failures(project_dir), [])
 
     def test_script_preserves_a_quoted_windows_output_path(self) -> None:
         output_directory = Path(r"C:\STM32 Projects\generated")
@@ -328,6 +435,7 @@ class CubeScriptTests(unittest.TestCase):
                 project_dir = output_dir / "demo"
                 project_dir.mkdir()
                 (project_dir / "Makefile").write_text("all:\n", encoding="utf-8")
+                (project_dir / "demo.ioc").write_text("SYS.Debug=Serial Wire\n", encoding="utf-8")
                 return stm32_cube.subprocess.CompletedProcess([], 0, "")
 
             with (
@@ -352,6 +460,41 @@ class CubeScriptTests(unittest.TestCase):
             write_provenance.call_args.args[3],
             hashlib.sha256(profile_snapshot).hexdigest(),
         )
+
+    def test_create_runs_generation_modules_integration_and_build_in_one_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            project_dir = output_dir / "project_02_servo"
+            project_dir.mkdir()
+            arguments = stm32_cube.argparse.Namespace(
+                name="02 servo",
+                normalize_name=True,
+                output_dir=str(output_dir),
+                cubemx="cubemx",
+                cubeide="cubeide",
+                jobs=4,
+            )
+            provenance = {
+                "modules": [
+                    {"name": "servo_output", "pack": "servo"},
+                    {"name": "key_up", "pack": "gpio_input"},
+                ]
+            }
+            with (
+                mock.patch.object(stm32_cube, "run_generate", return_value=0) as generate,
+                mock.patch.object(stm32_cube, "load_project_provenance", return_value=provenance),
+                mock.patch.object(stm32_cube, "run_module", return_value=0) as module,
+                mock.patch.object(stm32_cube, "run_integrate", return_value=0) as integrate,
+                mock.patch.object(stm32_cube, "run_build", return_value=0) as build,
+            ):
+                self.assertEqual(stm32_cube.run_create(arguments), 0)
+            report = json.loads((project_dir / "codex-run-report.json").read_text(encoding="utf-8"))
+        generate.assert_called_once_with(arguments)
+        self.assertEqual(module.call_count, 2)
+        self.assertEqual(integrate.call_count, 2)
+        build.assert_called_once()
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual([stage["name"] for stage in report["stages"]], ["generation", "module:servo_output", "module:key_up", "build"])
 
     def test_generation_preflight_uses_concrete_local_cubemx_operation_facts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -562,6 +705,63 @@ class CubeScriptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"operations\[1\]\.parameters\[1\]\.verification"):
                 stm32_cube.config_plan(plan_path, "STM32F401RETx", self.board_profile())
 
+    def test_parameter_verification_accepts_only_a_proven_installed_default(self) -> None:
+        configuration = {
+            "operations": [
+                {
+                    "instance": "I2C1",
+                    "pins": [],
+                    "parameters": [
+                        {
+                            "name": "I2C_Mode",
+                            "value": "I2C_Standard",
+                            "verification": {"file": "$IOC", "contains": "I2C1.I2C_Mode=I2C_Standard"},
+                        },
+                        {
+                            "name": "ClockSpeed",
+                            "value": "100000",
+                            "verification": {"file": "$IOC", "contains": "I2C1.ClockSpeed=100000"},
+                        },
+                    ],
+                    "timing": None,
+                }
+            ],
+            "pin_assignments": [],
+            "verifications": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            database = root / "db"
+            modes = database / "IP" / "I2C-test_Modes.xml"
+            modes.parent.mkdir(parents=True)
+            modes.write_text(
+                '<Modes>'
+                '<RefParameter Name="I2C_Mode" DefaultValue="I2C_Standard"/>'
+                '<RefParameter Name="ClockSpeed" DefaultValue="100000"/>'
+                '<RefParameter Name="ClockSpeed" DefaultValue="400000"/>'
+                '</Modes>',
+                encoding="utf-8",
+            )
+            description = database / "mcu.xml"
+            description.write_text(
+                '<Mcu><IP Name="I2C" InstanceName="I2C1" Version="test"/></Mcu>',
+                encoding="utf-8",
+            )
+            stm32_cube.validate_operation_parameters_against_cubemx_database(
+                configuration,
+                "STM32F103ZETx",
+                "unused",
+                mcu_database=database,
+                mcu_description=description,
+            )
+            (root / "demo.ioc").write_text("", encoding="utf-8")
+            self.assertEqual(
+                stm32_cube.configuration_verification_failures(root, configuration),
+                ["$IOC is missing 'I2C1.ClockSpeed=100000'"],
+            )
+            (root / "demo.ioc").write_text("I2C1.ClockSpeed=100000\n", encoding="utf-8")
+            self.assertEqual(stm32_cube.configuration_verification_failures(root, configuration), [])
+
     def test_configuration_plan_requires_i2c_bus_signals_and_a_pwm_output_pin(self) -> None:
         incomplete_i2c_plan = {
             "schema_version": 5,
@@ -668,11 +868,17 @@ class CubeScriptTests(unittest.TestCase):
 
     def test_timer_timing_contract_verifies_generated_clock_and_frequency(self) -> None:
         self.assertEqual(
-            stm32_cube.stm32f4_timer_clock_property("STM32F401RETx", "TIM1", "operations[1].timing"),
-            "RCC.APB2Freq_Value",
+            stm32_cube.timer_clock_model("STM32F401RETx", "TIM1", "operations[1].timing"),
+            {
+                "bus": "APB2",
+                "bus_clock_property": "RCC.APB2Freq_Value",
+                "timer_clock_property": "RCC.APB2TimFreq_Value",
+                "divider_property": "RCC.APB2CLKDivider",
+                "requires_moe": True,
+            },
         )
-        with self.assertRaisesRegex(ValueError, "STM32F4 TIM instances"):
-            stm32_cube.stm32f4_timer_clock_property("STM32G071KBTx", "TIM1", "operations[1].timing")
+        with self.assertRaisesRegex(ValueError, "supports STM32F1 and STM32F4"):
+            stm32_cube.timer_clock_model("STM32G071KBTx", "TIM1", "operations[1].timing")
         plan = {
             "schema_version": 5,
             "mcu": "STM32F401RETx",
@@ -727,13 +933,18 @@ class CubeScriptTests(unittest.TestCase):
                     "period_parameter": "Period",
                     "prescaler": 15,
                     "period": 999,
-                    "clock_property": "RCC.APB1Freq_Value",
+                    "bus": "APB1",
+                    "bus_clock_property": "RCC.APB1Freq_Value",
+                    "timer_clock_property": "RCC.APB1TimFreq_Value",
+                    "divider_property": "RCC.APB1CLKDivider",
+                    "requires_moe": False,
                 },
             )
             ioc_path = root / "demo.ioc"
             ioc_path.write_text(
-                "RCC.AHBFreq_Value=16000000\n"
                 "RCC.APB1Freq_Value=16000000\n"
+                "RCC.APB1TimFreq_Value=16000000\n"
+                "RCC.APB1CLKDivider=RCC_HCLK_DIV1\n"
                 "TIM3.Prescaler=15\n"
                 "TIM3.Period=999\n",
                 encoding="utf-8",
@@ -741,8 +952,9 @@ class CubeScriptTests(unittest.TestCase):
             self.assertEqual(stm32_cube.configuration_verification_failures(root, configuration), [])
 
             ioc_path.write_text(
-                "RCC.AHBFreq_Value=16000000\n"
                 "RCC.APB1Freq_Value=8000000\n"
+                "RCC.APB1TimFreq_Value=8000000\n"
+                "RCC.APB1CLKDivider=RCC_HCLK_DIV2\n"
                 "TIM3.Prescaler=15\n"
                 "TIM3.Period=999\n",
                 encoding="utf-8",
@@ -750,14 +962,15 @@ class CubeScriptTests(unittest.TestCase):
             self.assertEqual(
                 stm32_cube.configuration_verification_failures(root, configuration),
                 [
-                    "operations[1].timing requires an unprescaled STM32F4 APB clock, but "
-                    "RCC.APB1Freq_Value=8000000 differs from RCC.AHBFreq_Value=16000000."
+                    "operations[1].timing generated RCC.APB1TimFreq_Value=8000000, but the APB divider rule gives "
+                    "16000000."
                 ],
             )
 
             ioc_path.write_text(
-                "RCC.AHBFreq_Value=16000000\n"
                 "RCC.APB1Freq_Value=16000000\n"
+                "RCC.APB1TimFreq_Value=16000000\n"
+                "RCC.APB1CLKDivider=RCC_HCLK_DIV1\n"
                 "TIM3.Prescaler=15\n"
                 "TIM3.Period=999\n",
                 encoding="utf-8",
@@ -770,6 +983,31 @@ class CubeScriptTests(unittest.TestCase):
                     "target_hz=1000 by 809524 ppm (tolerance_ppm=0)."
                 ],
             )
+
+    def test_stm32f1_timer_model_applies_apb_x2_and_marks_tim1_moe(self) -> None:
+        timing = {
+            "timer_input_hz": 72000000,
+            "target_hz": 50,
+            "tolerance_ppm": 0,
+            "prescaler": 71,
+            "period": 19999,
+            **stm32_cube.timer_clock_model("STM32F103ZETx", "TIM1", "operations[1].timing"),
+        }
+        configuration = {
+            "operations": [{"timing": timing, "pins": [], "parameters": []}],
+            "pin_assignments": [],
+            "verifications": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project_dir = Path(temporary_directory)
+            (project_dir / "demo.ioc").write_text(
+                "RCC.APB2Freq_Value=36000000\n"
+                "RCC.APB2TimFreq_Value=72000000\n"
+                "RCC.APB2CLKDivider=RCC_HCLK_DIV2\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(stm32_cube.timer_timing_verification_failures(project_dir, configuration), [])
+        self.assertTrue(timing["requires_moe"])
 
     def test_configuration_plan_validates_selected_pack_resources(self) -> None:
         operation = {
@@ -1036,6 +1274,45 @@ class CubeScriptTests(unittest.TestCase):
         self.assertEqual(configuration["operations"], [])
         self.assertEqual(configuration["packs"], ["gpio"])
 
+    def test_gpio_input_plan_carries_pull_polarity_and_debounce_contract(self) -> None:
+        profile = self.board_profile()
+        profile["pins"][0]["active_level"] = "low"
+        plan = {
+            "schema_version": 5,
+            "mcu": "STM32F401RETx",
+            "packs": ["gpio_input"],
+            "modules": [
+                {
+                    "name": "key_up",
+                    "pack": "gpio_input",
+                    "bindings": {
+                        "GPIO_PORT": "GPIOB",
+                        "GPIO_PIN": "GPIO_PIN_8",
+                        "ACTIVE_LEVEL": "GPIO_PIN_RESET",
+                        "DEBOUNCE_MS": 20,
+                        "LONG_PRESS_MS": 800,
+                    },
+                }
+            ],
+            "operations": [],
+            "pin_assignments": [{"pack": "gpio_input", "pin": "PB8", "signal": "GPIO_Input"}],
+            "ioc_overrides": [
+                {"pack": "gpio_input", "kind": "gpio-input-pull", "key": "PB8.GPIOParameters", "value": "GPIO_PuPd"},
+                {"pack": "gpio_input", "kind": "gpio-input-pull", "key": "PB8.GPIO_PuPd", "value": "GPIO_PULLUP"},
+            ],
+            "verifications": [
+                {"file": "$IOC", "contains": "PB8.GPIOParameters=GPIO_PuPd"},
+                {"file": "$IOC", "contains": "PB8.GPIO_PuPd=GPIO_PULLUP"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            plan_path = Path(temporary_directory) / "configuration-plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            configuration = stm32_cube.config_plan(plan_path, "STM32F401RETx", profile)
+        self.assertEqual(configuration["modules"][0]["bindings"]["DEBOUNCE_MS"], 20)
+        self.assertEqual(configuration["modules"][0]["bindings"]["ACTIVE_LEVEL"], "GPIO_PIN_RESET")
+        self.assertEqual(configuration["ioc_overrides"], plan["ioc_overrides"])
+
     def test_configuration_plan_declares_exact_pack_module_bindings(self) -> None:
         base_plan = {
             "schema_version": 5,
@@ -1150,6 +1427,31 @@ class CubeScriptTests(unittest.TestCase):
             duplicate_path.write_text(json.dumps(duplicate_plan), encoding="utf-8")
             with self.assertRaises(ValueError):
                 stm32_cube.config_plan(duplicate_path, "STM32F401RETx", self.board_profile())
+
+    def test_configuration_safety_requires_conflict_and_external_supply_acknowledgement(self) -> None:
+        profile_pin = self.board_profile()["pins"][0]
+        profile_pin["electrical"]["external_supply_required"] = True
+        profile_pin["electrical"]["conflicts"] = ["camera interface"]
+        pins = {profile_pin["pin"]: profile_pin}
+        with self.assertRaisesRegex(ValueError, "unacknowledged conflict"):
+            stm32_cube.configuration_safety({}, pins, {"PB8"})
+        with self.assertRaisesRegex(ValueError, "requires an external supply"):
+            stm32_cube.configuration_safety(
+                {"safety": {"acknowledged_conflicts": ["camera interface"]}},
+                pins,
+                {"PB8"},
+            )
+        safety = stm32_cube.configuration_safety(
+            {
+                "safety": {
+                    "acknowledged_conflicts": ["camera interface"],
+                    "external_supply_pins": ["PB8"],
+                }
+            },
+            pins,
+            {"PB8"},
+        )
+        self.assertEqual(safety["connections"][0]["silkscreen"], "SCL")
 
     def test_configuration_plan_requires_operation_or_direct_pin_assignment(self) -> None:
         plan = {
@@ -1883,7 +2185,7 @@ class CubeScriptTests(unittest.TestCase):
             (project_dir / stm32_cube.PROJECT_PROVENANCE_FILE).write_text(
                 json.dumps({"schema_version": 1}), encoding="utf-8"
             )
-            with self.assertRaisesRegex(ValueError, "schema_version must be 11"):
+            with self.assertRaisesRegex(ValueError, "schema_version must be 12"):
                 stm32_cube.load_project_provenance(project_dir)
 
     def test_integrate_only_updates_cubemx_user_regions_and_is_idempotent(self) -> None:
@@ -1926,6 +2228,150 @@ class CubeScriptTests(unittest.TestCase):
                 0,
             )
             self.assertEqual(first, main_path.read_text(encoding="utf-8"))
+
+    def test_integrate_places_process_before_basic_layout_while_closing_brace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project_dir = Path(temporary_directory)
+            (project_dir / "Makefile").write_text(
+                "#######################################\n# build the application\n", encoding="utf-8"
+            )
+            main_path = project_dir / "Src" / "main.c"
+            main_path.parent.mkdir(parents=True)
+            main_path.write_text(
+                '#include "main.h"\n'
+                '/* USER CODE BEGIN Includes */\n'
+                '/* USER CODE END Includes */\n'
+                'int main(void)\n{\n'
+                '  /* USER CODE BEGIN 2 */\n'
+                '  /* USER CODE END 2 */\n'
+                '  while (1)\n'
+                '  {\n'
+                '    /* USER CODE BEGIN 3 */\n'
+                '  }\n'
+                '  /* USER CODE END 3 */\n'
+                '}\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                stm32_cube.run_module(stm32_cube.argparse.Namespace(project_dir=str(project_dir), name="servo_service")),
+                0,
+            )
+            arguments = stm32_cube.argparse.Namespace(project_dir=str(project_dir), name="servo_service")
+            self.assertEqual(stm32_cube.run_integrate(arguments), 0)
+            first = main_path.read_text(encoding="utf-8")
+            call = first.index("servo_service_process();")
+            closing = stm32_cube.main_while_one_bounds(first, stm32_cube.user_code_region(first, "3")[0])[1]
+            self.assertLess(call, closing)
+            self.assertEqual(stm32_cube.run_integrate(arguments), 0)
+            self.assertEqual(first, main_path.read_text(encoding="utf-8"))
+
+    def test_revision_merges_only_matching_cubemx_user_regions(self) -> None:
+        before = (
+            "generated old\n"
+            "/* USER CODE BEGIN 1 */\nuser kept();\n/* USER CODE END 1 */\n"
+            "old generated tail\n"
+        )
+        after = (
+            "generated new\n"
+            "/* USER CODE BEGIN 1 */\n/* USER CODE END 1 */\n"
+            "/* USER CODE BEGIN 2 */\nnew default();\n/* USER CODE END 2 */\n"
+            "new generated tail\n"
+        )
+        merged = stm32_cube.merge_cubemx_user_regions(before, after)
+        self.assertIn("generated new", merged)
+        self.assertIn("user kept();", merged)
+        self.assertIn("new default();", merged)
+        self.assertNotIn("old generated tail", merged)
+
+    def test_revise_apply_requires_an_explicit_backup_directory(self) -> None:
+        arguments = stm32_cube.argparse.Namespace(project_dir="/tmp/project", apply=True, backup_dir=None)
+        with mock.patch.object(stm32_cube, "load_project_provenance", return_value={"mcu": "STM32F401RETx"}):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(stm32_cube.run_revise(arguments), 2)
+        self.assertIn("requires an explicit new --backup-dir", stderr.getvalue())
+
+    def test_flash_requires_exact_artifact_hash_before_target_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project_dir = Path(temporary_directory) / "project"
+            project_dir.mkdir()
+            self.write_project_provenance(project_dir, ["servo"])
+            artifact = project_dir / "build" / "firmware.hex"
+            artifact.parent.mkdir()
+            artifact.write_text(":00000001FF\n", encoding="ascii")
+            artifact_sha256 = stm32_cube.file_sha256(artifact)
+            arguments = stm32_cube.argparse.Namespace(
+                project_dir=str(project_dir),
+                artifact=str(artifact),
+                expected_device_id="0x413",
+                backup_size=524288,
+                backup_dir=str(Path(temporary_directory) / "backup"),
+                authorize_sha256=None,
+                min_voltage=2.7,
+                frequency_khz=4000,
+                mode="NORMAL",
+                cubeprogrammer=None,
+                cubeide=None,
+            )
+            stdout = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stdout),
+                mock.patch.object(stm32_cube, "discover_cubeprogrammer") as discover,
+                mock.patch.object(stm32_cube, "run_programmer") as programmer,
+            ):
+                self.assertEqual(stm32_cube.run_flash(arguments), 2)
+        self.assertIn(artifact_sha256, stdout.getvalue())
+        discover.assert_not_called()
+        programmer.assert_not_called()
+
+    def test_flash_backs_up_then_writes_verifies_and_resets_authorized_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            project_dir = root / "project"
+            project_dir.mkdir()
+            self.write_project_provenance(project_dir, ["servo"])
+            artifact = project_dir / "build" / "firmware.hex"
+            artifact.parent.mkdir()
+            artifact.write_text(":00000001FF\n", encoding="ascii")
+            backup_dir = root / "backup"
+            arguments = stm32_cube.argparse.Namespace(
+                project_dir=str(project_dir),
+                artifact=str(artifact),
+                expected_device_id="0x0413",
+                backup_size=16,
+                backup_dir=str(backup_dir),
+                authorize_sha256=stm32_cube.file_sha256(artifact),
+                min_voltage=2.7,
+                frequency_khz=4000,
+                mode="NORMAL",
+                cubeprogrammer=None,
+                cubeide=None,
+            )
+
+            def programmer(command: list[str]) -> object:
+                if "-u" in command:
+                    Path(command[-1]).write_bytes(b"pre-flash-image")
+                return stm32_cube.subprocess.CompletedProcess(
+                    args=command,
+                    returncode=0,
+                    stdout="Device ID : 0x413\nVoltage : 3.28V\n",
+                )
+
+            with (
+                mock.patch.object(stm32_cube, "discover_cubeprogrammer", return_value="programmer"),
+                mock.patch.object(stm32_cube, "run_programmer", side_effect=programmer) as run_programmer,
+            ):
+                self.assertEqual(stm32_cube.run_flash(arguments), 0)
+
+            report = json.loads((backup_dir / "flash-report.json").read_text(encoding="utf-8"))
+            commands = [call.args[0] for call in run_programmer.call_args_list]
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["target"]["actual_device_id"], "0x413")
+        self.assertEqual(report["backup"]["status"], "passed")
+        self.assertIn("-u", commands[1])
+        self.assertIn("-d", commands[2])
+        self.assertIn("-v", commands[2])
+        self.assertIn("-rst", commands[3])
 
 
 if __name__ == "__main__":

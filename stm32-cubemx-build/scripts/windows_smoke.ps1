@@ -23,10 +23,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ProjectName = "stm32_windows_smoke",
 
-    [ValidateNotNullOrEmpty()]
-    [string]$ModuleName = "windows_smoke",
-
-    [string]$Pack,
+    [string]$ManualIndex,
     [string]$CubeMX,
     [string]$CubeIDE,
     [ValidateNotNullOrEmpty()]
@@ -86,17 +83,10 @@ try {
     if ($ProjectName -notmatch '^[A-Za-z][A-Za-z0-9_-]*$') {
         throw "Use a ProjectName that starts with a letter and contains letters, numbers, underscores, or hyphens."
     }
-    if ($ModuleName -notmatch '^[a-z][a-z0-9_]*$') {
-        throw "Use a ModuleName that starts with a lowercase letter and contains lowercase letters, numbers, or underscores."
-    }
     if ($Jobs -lt 0) {
         throw "Jobs must be zero or a positive integer."
     }
 
-    $hasPack = -not [string]::IsNullOrWhiteSpace($Pack)
-    if ($hasPack -and $Pack -notmatch '^[a-z][a-z0-9-]*$') {
-        throw "Use a Pack name that starts with a lowercase letter and contains lowercase letters, numbers, or hyphens."
-    }
     $null = Get-Command -Name $Python -ErrorAction Stop
 
     $skillScript = Join-Path -Path $PSScriptRoot -ChildPath "stm32_cube.py"
@@ -122,36 +112,27 @@ try {
     }
 
     Invoke-Stm32Skill -SkillArguments ($toolArguments + @("doctor", "--strict"))
-    Invoke-Stm32Skill -SkillArguments (
-        $toolArguments + @(
-            "generate",
+    $createArguments = $toolArguments + @(
+            "create",
             "--mcu", $Mcu,
             "--name", $ProjectName,
             "--output-dir", $outputPath,
             "--board-profile", $profilePath,
             "--manual", $manualPath,
             "--plan", $planPath
-        )
     )
-
-    $moduleArguments = $toolArguments + @("module", "--project-dir", $projectDir, "--name", $ModuleName)
-    if ($hasPack) {
-        $moduleArguments += @("--pack", $Pack)
+    if (-not [string]::IsNullOrWhiteSpace($ManualIndex)) {
+        $manualIndexPath = Resolve-RequiredFile -Value $ManualIndex -Label "ManualIndex"
+        $createArguments += @("--manual-index", $manualIndexPath)
     }
-    Invoke-Stm32Skill -SkillArguments $moduleArguments
-    Invoke-Stm32Skill -SkillArguments (
-        $toolArguments + @("integrate", "--project-dir", $projectDir, "--name", $ModuleName)
-    )
-
-    $buildArguments = $toolArguments + @("build", "--project-dir", $projectDir)
     if ($Jobs -gt 0) {
-        $buildArguments += @("--jobs", $Jobs.ToString())
+        $createArguments += @("--jobs", $Jobs.ToString())
     }
-    Invoke-Stm32Skill -SkillArguments $buildArguments
+    Invoke-Stm32Skill -SkillArguments $createArguments
 
     Write-Host "WINDOWS_SMOKE_PASS"
     Write-Host "Generated and compiled project: $projectDir"
-    Write-Host "Generation and compilation completed. Hardware flashing, debugging, and measurement continue in a separate board run."
+    Write-Host "Generation, planned module integration, and compilation completed."
     exit 0
 }
 catch {

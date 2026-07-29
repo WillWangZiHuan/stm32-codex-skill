@@ -51,7 +51,7 @@ class WindowsSmokeContractTests(unittest.TestCase):
                     windows_smoke_contract.run_skill_invocation(
                         common
                         + [
-                            "generate",
+                            "create",
                             "--mcu",
                             "STM32F401RETx",
                             "--name",
@@ -64,40 +64,14 @@ class WindowsSmokeContractTests(unittest.TestCase):
                             str(manual),
                             "--plan",
                             str(plan),
+                            "--jobs",
+                            "3",
                         ]
-                    ),
-                    0,
-                )
-                self.assertEqual(
-                    windows_smoke_contract.run_skill_invocation(
-                        common
-                        + [
-                            "module",
-                            "--project-dir",
-                            str(project_dir),
-                            "--name",
-                            "status_output",
-                            "--pack",
-                            "gpio",
-                        ]
-                    ),
-                    0,
-                )
-                self.assertEqual(
-                    windows_smoke_contract.run_skill_invocation(
-                        common
-                        + ["integrate", "--project-dir", str(project_dir), "--name", "status_output"]
-                    ),
-                    0,
-                )
-                self.assertEqual(
-                    windows_smoke_contract.run_skill_invocation(
-                        common + ["build", "--project-dir", str(project_dir), "--jobs", "3"]
                     ),
                     0,
                 )
 
-            windows_smoke_contract.verify_contract(state, project_dir, "status_output")
+            windows_smoke_contract.verify_contract(state, project_dir)
 
 
 if __name__ == "__main__":

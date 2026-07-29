@@ -1,0 +1,51 @@
+{
+  "schema_version": 5,
+  "id": "gpio_input",
+  "summary": "Configure one evidence-backed GPIO input or EXTI line and create a debounced key module.",
+  "requires": [
+    "A validated board profile with the input pin, board label, pull circuit, active level, and shared-network constraints.",
+    "A GPIO_Input or matching GPIO_EXTI line selected for the documented pin.",
+    "An explicit pull configuration and debounce/long-press timing chosen for the input device."
+  ],
+  "templates": [
+    "templates/gpio_input.h.tmpl",
+    "templates/gpio_input.c.tmpl"
+  ],
+  "binding_types": {
+    "GPIO_PORT": "identifier",
+    "GPIO_PIN": "identifier",
+    "ACTIVE_LEVEL": "gpio-level",
+    "DEBOUNCE_MS": "uint",
+    "LONG_PRESS_MS": "uint"
+  },
+  "plan_resources": {
+    "operation_instance_prefixes": [],
+    "direct_pin_signals": [
+      "GPIO_Input",
+      "GPIO_EXTI0",
+      "GPIO_EXTI1",
+      "GPIO_EXTI2",
+      "GPIO_EXTI3",
+      "GPIO_EXTI4",
+      "GPIO_EXTI5",
+      "GPIO_EXTI6",
+      "GPIO_EXTI7",
+      "GPIO_EXTI8",
+      "GPIO_EXTI9",
+      "GPIO_EXTI10",
+      "GPIO_EXTI11",
+      "GPIO_EXTI12",
+      "GPIO_EXTI13",
+      "GPIO_EXTI14",
+      "GPIO_EXTI15"
+    ],
+    "required_operation_signal_suffixes": [],
+    "minimum_operation_pins": 0
+  },
+  "ioc_override_kinds": ["gpio-input-pull"],
+  "verifications": [
+    "Verify the generated .ioc assigns GPIO_Input or the matching EXTI line and the documented pull configuration.",
+    "Verify ACTIVE_LEVEL matches the board profile and the module implements stable-edge debounce.",
+    "Compile the project after module integration."
+  ]
+}

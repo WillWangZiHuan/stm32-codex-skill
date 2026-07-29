@@ -19,7 +19,7 @@ PIN_IDENTIFIER = re.compile(r"^P[A-Z][0-9]{1,2}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PIN_STATUSES = {"available", "reserved", "used"}
 MANUAL_INDEX_SUFFIX = ".manual-index.json"
-BOARD_PROFILE_SCHEMA_VERSION = 2
+BOARD_PROFILE_SCHEMA_VERSION = 3
 MIN_EVIDENCE_ANCHOR_CHARACTERS = 8
 MAX_EVIDENCE_ANCHOR_CHARACTERS = 240
 
@@ -44,6 +44,12 @@ def list_value(value: Any, label: str) -> list[Any]:
     if not isinstance(value, list):
         raise BoardProfileError(f"{label} must be a list.")
     return value
+
+
+def positive_number(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise BoardProfileError(f"{label} must be a positive number.")
+    return float(value)
 
 
 def required_value(container: dict[str, Any], key: str, label: str) -> Any:
@@ -172,14 +178,48 @@ def validate_profile_data(profile: dict[str, Any]) -> None:
             raise BoardProfileError(f"pins[{index}].pin repeats {pin_name}.")
         seen_pins.add(pin_name)
         nonempty_string(required_value(pin, "board_signal", f"pins[{index}].board_signal"), f"pins[{index}].board_signal")
+        nonempty_string(required_value(pin, "silkscreen", f"pins[{index}].silkscreen"), f"pins[{index}].silkscreen")
+        nonempty_string(required_value(pin, "connector", f"pins[{index}].connector"), f"pins[{index}].connector")
+        nonempty_string(required_value(pin, "position_note", f"pins[{index}].position_note"), f"pins[{index}].position_note")
+        nonempty_string(required_value(pin, "manual_figure", f"pins[{index}].manual_figure"), f"pins[{index}].manual_figure")
+        shared_with = list_value(required_value(pin, "shared_with", f"pins[{index}].shared_with"), f"pins[{index}].shared_with")
+        for shared_index, shared in enumerate(shared_with, start=1):
+            nonempty_string(shared, f"pins[{index}].shared_with[{shared_index}]")
         status = nonempty_string(required_value(pin, "status", f"pins[{index}].status"), f"pins[{index}].status")
         if status not in PIN_STATUSES:
             raise BoardProfileError(f"pins[{index}].status must be one of: {', '.join(sorted(PIN_STATUSES))}.")
         electrical_constraints = list_value(pin.get("electrical_constraints", []), f"pins[{index}].electrical_constraints")
         for constraint_index, constraint in enumerate(electrical_constraints, start=1):
             nonempty_string(constraint, f"pins[{index}].electrical_constraints[{constraint_index}]")
+        electrical = object_value(required_value(pin, "electrical", f"pins[{index}].electrical"), f"pins[{index}].electrical")
+        nonempty_string(
+            required_value(electrical, "power_domain", f"pins[{index}].electrical.power_domain"),
+            f"pins[{index}].electrical.power_domain",
+        )
+        positive_number(
+            required_value(electrical, "logic_voltage_v", f"pins[{index}].electrical.logic_voltage_v"),
+            f"pins[{index}].electrical.logic_voltage_v",
+        )
+        positive_number(
+            required_value(electrical, "max_current_ma", f"pins[{index}].electrical.max_current_ma"),
+            f"pins[{index}].electrical.max_current_ma",
+        )
+        external_supply_required = required_value(
+            electrical,
+            "external_supply_required",
+            f"pins[{index}].electrical.external_supply_required",
+        )
+        if not isinstance(external_supply_required, bool):
+            raise BoardProfileError(f"pins[{index}].electrical.external_supply_required must be a boolean.")
+        conflicts = list_value(
+            required_value(electrical, "conflicts", f"pins[{index}].electrical.conflicts"),
+            f"pins[{index}].electrical.conflicts",
+        )
+        for conflict_index, conflict in enumerate(conflicts, start=1):
+            nonempty_string(conflict, f"pins[{index}].electrical.conflicts[{conflict_index}]")
+        if "active_level" in pin and pin["active_level"] not in {"high", "low"}:
+            raise BoardProfileError(f"pins[{index}].active_level must be high or low when present.")
         validate_evidence(required_value(pin, "evidence", f"pins[{index}].evidence"), f"pins[{index}].evidence")
-
     clocks = list_value(profile.get("clocks", []), "clocks")
     for index, item in enumerate(clocks, start=1):
         clock = object_value(item, f"clocks[{index}]")
@@ -194,6 +234,29 @@ def validate_profile_data(profile: dict[str, Any]) -> None:
         constraint = object_value(item, f"constraints[{index}]")
         nonempty_string(required_value(constraint, "description", f"constraints[{index}].description"), f"constraints[{index}].description")
         validate_evidence(required_value(constraint, "evidence", f"constraints[{index}].evidence"), f"constraints[{index}].evidence")
+
+
+def pin_guide(profile: dict[str, Any], query: str) -> list[dict[str, Any]]:
+    needle = query.strip().casefold()
+    if not needle:
+        raise BoardProfileError("Pin query must be a non-empty MCU pin, signal, silkscreen, or connector label.")
+    results: list[dict[str, Any]] = []
+    for pin in profile["pins"]:
+        searchable = [pin["pin"], pin["board_signal"], pin["silkscreen"], pin["connector"], *pin["shared_with"]]
+        if any(needle in value.casefold() for value in searchable):
+            results.append(
+                {
+                    "pin": pin["pin"],
+                    "board_signal": pin["board_signal"],
+                    "silkscreen": pin["silkscreen"],
+                    "connector": pin["connector"],
+                    "position_note": pin["position_note"],
+                    "manual_figure": pin["manual_figure"],
+                    "shared_with": pin["shared_with"],
+                    "electrical": pin["electrical"],
+                }
+            )
+    return results
 
 
 def read_manual_snapshot(path: Path) -> bytes:
@@ -224,6 +287,36 @@ def read_pdf_page_count(path: Path) -> int:
     return len(read_pdf_page_texts(path))
 
 
+def validated_manual_index_page_texts(index_path: Path, manual_snapshot: bytes) -> list[str]:
+    try:
+        raw = json.loads(index_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise BoardProfileError(f"Manual index path is missing: {index_path}") from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise BoardProfileError(f"Could not read manual index: {index_path}: {error}") from error
+    index = object_value(raw, "manual index")
+    if index.get("schema_version") != 1:
+        raise BoardProfileError("manual index schema_version must be 1.")
+    manual = object_value(required_value(index, "manual", "manual index.manual"), "manual index.manual")
+    indexed_digest = nonempty_string(
+        required_value(manual, "sha256", "manual index.manual.sha256"),
+        "manual index.manual.sha256",
+    )
+    if indexed_digest != hashlib.sha256(manual_snapshot).hexdigest():
+        raise BoardProfileError("Manual index SHA-256 differs from the supplied manual; rebuild the index.")
+    pages = list_value(required_value(index, "pages", "manual index.pages"), "manual index.pages")
+    page_texts: list[str] = []
+    for expected_page, raw_page in enumerate(pages, start=1):
+        page = object_value(raw_page, f"manual index.pages[{expected_page}]")
+        if page.get("page") != expected_page:
+            raise BoardProfileError("Manual index pages must be contiguous and one-based.")
+        text = page.get("text")
+        if not isinstance(text, str):
+            raise BoardProfileError(f"manual index.pages[{expected_page}].text must be a string.")
+        page_texts.append(text)
+    return page_texts
+
+
 def validate_evidence_anchors(profile: dict[str, Any], page_texts: list[str]) -> None:
     """Require each claimed fact to have a short text anchor on its cited page."""
 
@@ -246,6 +339,7 @@ def validate_evidence_anchors(profile: dict[str, Any], page_texts: list[str]) ->
 def load_and_validate_profile_snapshot(
     profile_path: Path,
     manual_path: Path | None = None,
+    manual_index_path: Path | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     profile_snapshot = read_profile_snapshot(profile_path)
     profile = read_json_bytes(profile_snapshot, profile_path)
@@ -256,7 +350,11 @@ def load_and_validate_profile_snapshot(
         actual_digest = hashlib.sha256(manual_snapshot).hexdigest()
         if actual_digest != expected_digest:
             raise BoardProfileError("Manual SHA-256 differs from board.manual.sha256; rebuild the profile from this exact manual.")
-        page_texts = read_pdf_page_texts_from_bytes(manual_snapshot, manual_path)
+        page_texts = (
+            validated_manual_index_page_texts(manual_index_path, manual_snapshot)
+            if manual_index_path is not None
+            else read_pdf_page_texts_from_bytes(manual_snapshot, manual_path)
+        )
         page_count = len(page_texts)
         too_large = sorted({page for page in evidence_pages(profile) if page > page_count})
         if too_large:
@@ -265,8 +363,12 @@ def load_and_validate_profile_snapshot(
     return profile, profile_snapshot
 
 
-def load_and_validate_profile(profile_path: Path, manual_path: Path | None = None) -> dict[str, Any]:
-    profile, _ = load_and_validate_profile_snapshot(profile_path, manual_path)
+def load_and_validate_profile(
+    profile_path: Path,
+    manual_path: Path | None = None,
+    manual_index_path: Path | None = None,
+) -> dict[str, Any]:
+    profile, _ = load_and_validate_profile_snapshot(profile_path, manual_path, manual_index_path)
     return profile
 
 
@@ -307,6 +409,10 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="Validate an evidence-backed board profile.")
     validate.add_argument("--profile", required=True, help="board-profile.json path.")
     validate.add_argument("--manual", help="Optional source PDF to hash-check and validate cited page numbers.")
+    validate.add_argument("--manual-index", help="Matching private *.manual-index.json for fast page validation.")
+    guide = commands.add_parser("pin-guide", help="Resolve an MCU pin or board silkscreen to connection details.")
+    guide.add_argument("--profile", required=True, help="Validated board-profile.json path.")
+    guide.add_argument("--query", required=True, help="MCU pin, board signal, silkscreen, or connector label.")
     return root
 
 
@@ -320,9 +426,20 @@ def main() -> int:
         if args.command == "validate":
             profile_path = Path(args.profile).expanduser().resolve()
             manual_path = Path(args.manual).expanduser().resolve() if args.manual else None
-            profile = load_and_validate_profile(profile_path, manual_path)
+            manual_index_path = Path(args.manual_index).expanduser().resolve() if args.manual_index else None
+            if manual_index_path is not None and manual_path is None:
+                raise BoardProfileError("--manual-index requires --manual so its SHA-256 can be verified.")
+            profile = load_and_validate_profile(profile_path, manual_path, manual_index_path)
             print(f"Board profile is valid: {profile_path}")
             print(f"MCU: {profile['mcu']['part_number']}")
+            return 0
+        if args.command == "pin-guide":
+            profile_path = Path(args.profile).expanduser().resolve()
+            profile = load_and_validate_profile(profile_path)
+            matches = pin_guide(profile, args.query)
+            if not matches:
+                raise BoardProfileError(f"No board pin matches {args.query!r}.")
+            print(json.dumps(matches, ensure_ascii=False, indent=2))
             return 0
     except BoardProfileError as error:
         print(f"Error: {error}", file=sys.stderr)

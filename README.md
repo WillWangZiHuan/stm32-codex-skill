@@ -3,8 +3,8 @@
 Turn a board manual and a plain-language STM32 request into a new CubeMX
 Makefile project, an App module, and compiled firmware artifacts.
 
-`stm32-cubemx-build` is a Codex Skill for GPIO output, UART, I2C, SPI, PWM,
-timer, and application-module work. CubeMX generates the project; CubeIDE
+`stm32-cubemx-build` is a Codex Skill for GPIO input/output, UART, I2C, SPI,
+PWM, timers, servos, and application-module work. CubeMX generates the project; CubeIDE
 provides the Arm compiler and Make tools. The normal workflow runs from the
 command line on macOS or Windows.
 
@@ -24,18 +24,18 @@ command line on macOS or Windows.
 | Pack | Purpose | Generated App API |
 | --- | --- | --- |
 | `gpio` | Push-pull digital output | Write and toggle a documented pin |
+| `gpio_input` | Polled or EXTI digital input | Debounce, press, release, and long-press events |
 | `uart` | Asynchronous serial port | Send and receive with an explicit timeout |
 | `i2c` | I2C bus | Read device registers through an HAL handle |
 | `spi` | 8-bit full-duplex master bus | Transfer buffers through an HAL handle |
 | `pwm` | Timer PWM output | Set duty cycle for a selected channel |
+| `servo` | 50 Hz hobby-servo output | Set pulse width or 0–180 degree angle |
 | `timer` | Periodic timer dispatch | Consume timer ticks from the main loop |
 
 ## See it work: a real I2C run
 
-> **Evidence level:** this is a fresh local generation-and-compilation run on
-> macOS. It uses a deliberately synthetic STM32F401 I2C manual fixture; no
-> physical board was attached, flashed, or tested. The fixture manual itself
-> is intentionally not tracked in this repository.
+This example records a local CubeMX generation-and-compilation run on macOS
+using a synthetic STM32F401 I2C manual fixture.
 
 **Scenario:** configure `I2C1` at **400 kHz** on documented `PB8` /
 `PB9`, generate the `release_i2c` App module, integrate it only into
@@ -81,8 +81,8 @@ The generated `main.c` sets `hi2c1.Init.ClockSpeed = 400000`. The generated
 </p>
 
 The local build verified project provenance first, then produced `.elf`,
-`.bin`, `.hex`, and `.map` artifacts. This is a compilation result,
-not a hardware-run claim.
+`.bin`, `.hex`, and `.map` artifacts. Its recorded result level is
+**Compile verified**.
 
 ## Workflow
 
@@ -93,10 +93,27 @@ not a hardware-run claim.
    profile and the installed CubeMX MCU database.
 4. Generate the new project and verify the requested pins, parameters, and
    source assertions in CubeMX output.
-5. Render the selected App module, integrate it into `main.c`, and compile.
+5. Run `create` once to generate the project, render every planned App module,
+   integrate `main.c`, compile, and write `codex-run-report.json` with stage timings.
 
-The local PDF index contains extracted manual pages. Keep it as a local working
-artifact; the shareable board profile contains citations and short anchors.
+```bash
+python stm32-cubemx-build/scripts/stm32_cube.py create \
+  --mcu STM32F103ZETx \
+  --name servo_demo \
+  --output-dir /absolute/output \
+  --board-profile /absolute/input/board-profile.json \
+  --manual /absolute/input/board-manual.pdf \
+  --manual-index /absolute/input/board.manual-index.json \
+  --plan /absolute/input/configuration-plan.json
+```
+
+The local PDF index contains extracted manual pages. Reuse it with
+`--manual-index` on later runs of the same manual; its manual SHA-256 binding
+prevents reuse with different PDF bytes.
+
+CubeMX runs have a 180-second default timeout. A pending firmware-license or
+package dialog is reported directly instead of leaving the workflow open for
+an unbounded period.
 
 Each plan uses a new output directory. Existing projects stay in place, while
 generated project code comes from CubeMX and application code lives in `App/`
@@ -142,17 +159,16 @@ On Windows, provide custom application locations as leading options:
 python stm32-cubemx-build/scripts/stm32_cube.py --cubemx "C:\path\to\STM32CubeMX.exe" --cubeide "C:\path\to\stm32cubeide.exe" doctor --strict
 ~~~
 
-Use the same `--cubemx` and `--cubeide` options with `generate` and `build`.
+Use the same `--cubemx` and `--cubeide` options with `create`, `revise`, and `build`.
 
 ## Windows end-to-end check
 
 `scripts/windows_smoke.ps1` runs the complete local workflow from a manual,
-board profile, and configuration plan: environment check, project generation,
-App module creation, integration, and compilation.
+board profile, and configuration plan through the one-shot `create` command.
 
 ~~~powershell
 $skill = "$env:USERPROFILE\.codex\skills\stm32-cubemx-build\scripts\windows_smoke.ps1"
-& $skill -Manual "C:\work\board-manual.pdf" -BoardProfile "C:\work\board-profile.json" -Plan "C:\work\configuration-plan.json" -Mcu "STM32F401RETx" -OutputDir "C:\work\stm32-output" -ProjectName "f401_windows_smoke"
+& $skill -Manual "C:\work\board-manual.pdf" -ManualIndex "C:\work\board.manual-index.json" -BoardProfile "C:\work\board-profile.json" -Plan "C:\work\configuration-plan.json" -Mcu "STM32F103ZETx" -OutputDir "C:\work\stm32-output" -ProjectName "servo_test"
 ~~~
 
 `WINDOWS_SMOKE_PASS` reports a complete generation-and-compilation run. Flash,
@@ -168,14 +184,15 @@ The Skill reports results at the level it has completed:
 - **Configuration verified**: CubeMX output matches the plan's requested pins,
   parameters, and assertions.
 - **Compile verified**: CubeIDE's toolchain builds the generated source.
-- **Hardware run**: a board has been flashed and exercised through a dedicated
-  on-board workflow.
+- **Flash verified**: the artifact hash was explicitly authorized, the target
+  ID and voltage matched, pre-flash bytes were backed up, and programming was verified.
+- **Hardware run**: the flashed board has been exercised against on-board acceptance criteria.
 
 ## Validation in this release
 
-- 74 deterministic tests cover profile validation, configuration planning,
+- 92 deterministic tests cover profile validation, configuration planning,
   generation provenance, pack rendering, integration, and build preparation.
-- All six built-in pack contracts validate.
+- All eight built-in pack contracts validate.
 - The current source completed an I2C flow with CubeMX generation, App module
   integration, and compilation to `.elf`, `.bin`, and `.hex` artifacts.
 

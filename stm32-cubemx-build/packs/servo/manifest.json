@@ -1,0 +1,27 @@
+{
+  "schema_version": 5,
+  "id": "servo",
+  "summary": "Configure a 50 Hz timer PWM output and create an SG90-style microsecond/angle control module.",
+  "requires": [
+    "A validated board profile with the PWM pin, board silkscreen, 3.3 V signal level, external 5 V servo supply, common ground, and shared-network conflicts.",
+    "A verified timer clock contract that produces 50 Hz PWM on the selected channel.",
+    "A planned external-supply acknowledgement for the servo connection."
+  ],
+  "templates": [
+    "templates/servo_output.h.tmpl",
+    "templates/servo_output.c.tmpl"
+  ],
+  "binding_types": {"TIM_HANDLE": "identifier", "TIM_CHANNEL": "identifier"},
+  "plan_resources": {
+    "operation_instance_prefixes": ["TIM"],
+    "direct_pin_signals": [],
+    "required_operation_signal_suffixes": [],
+    "minimum_operation_pins": 1
+  },
+  "ioc_override_kinds": [],
+  "verifications": [
+    "Verify the generated .ioc selects the planned timer channel, PWM pin, and 50 Hz counter settings.",
+    "Verify the APB timer clock rule and advanced-timer main output requirement when TIM1 or TIM8 is used.",
+    "Compile the generated module and record the external 5 V/common-ground connection checklist."
+  ]
+}

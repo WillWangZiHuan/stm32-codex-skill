@@ -12,7 +12,7 @@ records the matching profile snapshot hash in project provenance.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "board": {
     "name": "Board name exactly as documented",
     "manual": {"path": "board-manual.pdf", "sha256": "<64 lowercase hex characters>"}
@@ -25,8 +25,20 @@ records the matching profile snapshot hash in project provenance.
     {
       "pin": "PB8",
       "board_signal": "I2C SCL on J2.3",
+      "silkscreen": "SCL",
+      "connector": "J2.3",
+      "position_note": "Expansion header, third contact",
+      "manual_figure": "Figure 7",
+      "shared_with": [],
       "status": "available",
       "electrical_constraints": ["4.7 kOhm pull-up to 3.3 V"],
+      "electrical": {
+        "power_domain": "3V3",
+        "logic_voltage_v": 3.3,
+        "max_current_ma": 8,
+        "external_supply_required": false,
+        "conflicts": []
+      },
       "evidence": [{"page": 12, "anchor": "J2.3 PB8 4.7 kOhm", "claim": "J2.3 routes to PB8 and has a 4.7 kOhm pull-up"}]
     }
   ],
@@ -53,11 +65,18 @@ records the matching profile snapshot hash in project provenance.
   and an 8–240 character text anchor from that page.
 - Use `available`, `reserved`, or `used` for pin status. Configuration plans
   select pins marked `available`.
-- Describe `board_signal` as documented wiring, connector labeling, or board
-  role. Use CubeMX for alternate-function selection.
+- Describe `board_signal` as documented wiring or board role. Record the
+  physical `silkscreen`, `connector`, `position_note`, and `manual_figure` so
+  connection instructions can map a printed board label to an MCU pin.
+- Record shared functions and electrical facts as structured data. Every pin
+  supplies `power_domain`, `logic_voltage_v`, `max_current_ma`,
+  `external_supply_required`, and exact `conflicts`. Input pins additionally
+  set `active_level` to `high` or `low`.
 - Include the clock facts needed by PWM or timer calculations.
 - Validate the profile against the exact uploaded PDF before generation. When a
   needed diagram fact lacks extractable text, ask for a cited textual source
   for that fact.
 - Keep profile and manual inputs unchanged while validation or generation is
   running.
+- Use `pin-guide --profile <profile> --query <label>` to resolve an MCU pin,
+  silkscreen, connector, or shared board function into connection details.

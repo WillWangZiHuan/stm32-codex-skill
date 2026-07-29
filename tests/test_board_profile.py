@@ -19,7 +19,7 @@ import board_profile  # noqa: E402
 
 def valid_profile() -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "board": {"name": "Reference board", "manual": {"path": "manual.pdf", "sha256": "b" * 64}},
         "mcu": {
             "part_number": "STM32F401RETx",
@@ -29,8 +29,20 @@ def valid_profile() -> dict[str, object]:
             {
                 "pin": "PA8",
                 "board_signal": "PWM_OUT",
+                "silkscreen": "PDC",
+                "connector": "J8",
+                "position_note": "Camera header pin 1",
+                "manual_figure": "Figure 3-2",
+                "shared_with": ["OV_VSYNC"],
                 "status": "available",
                 "electrical_constraints": [],
+                "electrical": {
+                    "power_domain": "3V3",
+                    "logic_voltage_v": 3.3,
+                    "max_current_ma": 8,
+                    "external_supply_required": True,
+                    "conflicts": ["camera interface"],
+                },
                 "evidence": [{"page": 3, "anchor": "PA8 PWM connector", "claim": "PWM connector"}],
             }
         ],
@@ -53,6 +65,14 @@ class BoardProfileTests(unittest.TestCase):
         profile["pins"][0].pop("evidence")  # type: ignore[index]
         with self.assertRaises(board_profile.BoardProfileError):
             board_profile.validate_profile_data(profile)
+
+    def test_pin_guide_resolves_board_silkscreen_to_mcu_pin_and_constraints(self) -> None:
+        profile = valid_profile()
+        board_profile.validate_profile_data(profile)
+        matches = board_profile.pin_guide(profile, "PDC")
+        self.assertEqual(matches[0]["pin"], "PA8")
+        self.assertEqual(matches[0]["shared_with"], ["OV_VSYNC"])
+        self.assertTrue(matches[0]["electrical"]["external_supply_required"])
 
     def test_evidence_anchor_is_required(self) -> None:
         profile = valid_profile()
@@ -142,6 +162,38 @@ class BoardProfileTests(unittest.TestCase):
             index = json.loads(index_path.read_text(encoding="utf-8"))
         self.assertEqual(index["manual"]["sha256"], hashlib.sha256(original_manual).hexdigest())
         self.assertEqual(index["pages"], [{"page": 1, "text": "Snapshot page text"}])
+
+    def test_profile_validation_reuses_a_hash_bound_manual_index(self) -> None:
+        profile = valid_profile()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manual_path = root / "manual.pdf"
+            manual_snapshot = b"indexed manual"
+            manual_path.write_bytes(manual_snapshot)
+            digest = hashlib.sha256(manual_snapshot).hexdigest()
+            profile["board"]["manual"]["sha256"] = digest  # type: ignore[index]
+            profile_path = root / "board-profile.json"
+            profile_path.write_text(json.dumps(profile), encoding="utf-8")
+            index_path = root / "manual.manual-index.json"
+            index_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "manual": {"path": str(manual_path), "sha256": digest},
+                        "pages": [
+                            {"page": 1, "text": "STM32F401RETx reference fixture"},
+                            {"page": 2, "text": "unused page"},
+                            {"page": 3, "text": "PA8 PWM connector"},
+                            {"page": 4, "text": "8 MHz crystal"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(board_profile, "read_pdf_page_texts_from_bytes") as extract:
+                loaded = board_profile.load_and_validate_profile(profile_path, manual_path, index_path)
+            extract.assert_not_called()
+            self.assertEqual(loaded["mcu"]["part_number"], "STM32F401RETx")
 
     def test_manual_index_requires_extractable_text(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

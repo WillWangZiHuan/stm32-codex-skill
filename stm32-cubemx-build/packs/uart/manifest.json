@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "id": "uart",
   "summary": "Configure one evidence-backed asynchronous UART and create an explicit HAL send/receive module.",
   "requires": [
@@ -11,6 +11,7 @@
     "templates/uart_port.h.tmpl",
     "templates/uart_port.c.tmpl"
   ],
+  "binding_types": {"UART_HANDLE": "identifier"},
   "plan_resources": {
     "operation_instance_prefixes": [
       "USART",

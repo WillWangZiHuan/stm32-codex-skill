@@ -9,7 +9,7 @@ board-data example.
 Start from the project flow:
 
 ```text
-board manual → board profile → CubeMX configuration plan → App module → compilation
+board manual → board profile → configuration plan → one-shot create → compilation
 ```
 
 Describe the STM32 task your change enables, the board facts it uses, the
@@ -17,7 +17,7 @@ CubeMX settings it selects, and the generated output that confirms the result.
 
 ## Design checklist
 
-1. **Task** — state the concrete GPIO, UART, I2C, SPI, PWM, timer, or App
+1. **Task** — state the concrete GPIO, UART, I2C, SPI, PWM, timer, servo, or App
    workflow made easier by the change.
 2. **Board facts** — cite the manual page and a concise text anchor for each
    MCU, pin, clock, and board constraint used by the workflow.
@@ -44,8 +44,9 @@ packs/<id>/
 └── templates/
 ```
 
-- `manifest.json` defines a lowercase ID, inputs, templates, generated-output
-  checks, `plan_resources`, and supported `ioc_override_kinds`.
+- `manifest.json` defines a lowercase ID, templates, `binding_types`,
+  generated-output checks, `plan_resources`, and supported
+  `ioc_override_kinds`.
 - `PACK.md` explains the local CubeMX inspection, board evidence,
   configuration plan, module bindings, and validation steps.
 - `templates/` contains one `.h.tmpl` and one `.c.tmpl` for `module --pack`.
@@ -57,8 +58,9 @@ direct CubeMX pin assignments. `minimum_operation_pins` and
 operation.
 
 Use uppercase template placeholders. `MODULE_NAME` and `MODULE_GUARD` come
-from the module name; other placeholders map to C identifiers found in the
-generated CubeMX source, such as `hi2c1`, `GPIOA`, `GPIO_PIN_1`, or `TIM2_IRQn`.
+from the module name. Declare every other placeholder as `identifier`,
+`gpio-level`, or `uint` in `binding_types`; identifier values must exist in
+the generated CubeMX source.
 Declare each pack-backed module and its bindings in `configuration-plan.json`
 before generation.
 
@@ -72,7 +74,8 @@ before generation.
   integration uses the owned markers in `Src/main.c` user-code regions.
 - The generated provenance record ties the project to its manual, profile,
   plan, selected pack files, generated source inventory, `.ioc`, and build
-  inputs. Regenerate a fresh project after changing those generation inputs.
+  inputs. Use the `revise` workflow to regenerate, compile, diff, and preserve
+  `App/` plus matching CubeMX `USER CODE` regions.
 
 ## Required checks
 

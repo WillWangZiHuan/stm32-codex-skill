@@ -14,7 +14,7 @@ from typing import Any
 STATE_ENV = "STM32_SMOKE_CONTRACT_STATE"
 EXPECTED_CUBEMX_ENV = "STM32_SMOKE_EXPECTED_CUBEMX"
 EXPECTED_CUBEIDE_ENV = "STM32_SMOKE_EXPECTED_CUBEIDE"
-EXPECTED_SEQUENCE = ["doctor", "generate", "module", "integrate", "build"]
+EXPECTED_SEQUENCE = ["doctor", "create"]
 
 
 def require(condition: bool, message: str) -> None:
@@ -112,18 +112,11 @@ def create_generated_project(options: dict[str, str], state: dict[str, Any]) -> 
         encoding="utf-8",
     )
     (project_dir / "Makefile").write_text("all:\n\t@echo contract build\n", encoding="utf-8")
-    state["project_dir"] = str(project_dir)
-    state["project_name"] = options["--name"]
-
-
-def create_module(options: dict[str, str], state: dict[str, Any]) -> None:
-    project_dir = Path(options["--project-dir"])
-    require(normalized_path(project_dir) == normalized_path(state["project_dir"]), "Module project path changed.")
+    module_name = "planned_module"
     include_dir = project_dir / "App" / "Inc"
     source_dir = project_dir / "App" / "Src"
     include_dir.mkdir(parents=True)
     source_dir.mkdir(parents=True)
-    module_name = options["--name"]
     (include_dir / f"{module_name}.h").write_text(
         f"void {module_name}_init(void);\nvoid {module_name}_process(void);\n",
         encoding="utf-8",
@@ -134,18 +127,7 @@ def create_module(options: dict[str, str], state: dict[str, Any]) -> None:
         f"void {module_name}_process(void) {{}}\n",
         encoding="utf-8",
     )
-    state["module_name"] = module_name
-    state["pack"] = options["--pack"]
-
-
-def integrate_module(options: dict[str, str], state: dict[str, Any]) -> None:
-    project_dir = Path(options["--project-dir"])
-    module_name = options["--name"]
-    require(normalized_path(project_dir) == normalized_path(state["project_dir"]), "Integrate project path changed.")
-    require(module_name == state["module_name"], "Integrate module name changed.")
-    require((project_dir / "App" / "Inc" / f"{module_name}.h").is_file(), "Module header is missing.")
-    require((project_dir / "App" / "Src" / f"{module_name}.c").is_file(), "Module source is missing.")
-    main_path = project_dir / "Core" / "Src" / "main.c"
+    main_path = core_source / "main.c"
     main_text = main_path.read_text(encoding="utf-8")
     main_text = main_text.replace(
         "/* USER CODE BEGIN Includes */\n",
@@ -160,17 +142,17 @@ def integrate_module(options: dict[str, str], state: dict[str, Any]) -> None:
         f"    /* USER CODE BEGIN 3 */\n    {module_name}_process();\n",
     )
     main_path.write_text(main_text, encoding="utf-8")
-
-
-def create_build_artifacts(options: dict[str, str], state: dict[str, Any]) -> None:
-    project_dir = Path(options["--project-dir"])
-    require(normalized_path(project_dir) == normalized_path(state["project_dir"]), "Build project path changed.")
-    require(options["--jobs"] == "3", "PowerShell must preserve the requested build job count.")
     build_dir = project_dir / "build"
     build_dir.mkdir()
-    project_name = state["project_name"]
     for suffix in (".elf", ".bin", ".hex", ".map"):
-        (build_dir / f"{project_name}{suffix}").write_bytes(b"contract artifact\n")
+        (build_dir / f"{options['--name']}{suffix}").write_bytes(b"contract artifact\n")
+    (project_dir / "codex-run-report.json").write_text(
+        json.dumps({"command": "create", "status": "passed"}),
+        encoding="utf-8",
+    )
+    state["project_dir"] = str(project_dir)
+    state["project_name"] = options["--name"]
+    state["module_name"] = module_name
 
 
 def run_skill_invocation(arguments: list[str]) -> int:
@@ -190,21 +172,13 @@ def run_skill_invocation(arguments: list[str]) -> int:
 
     if command == "doctor":
         require(command_arguments == ["--strict"], "Doctor arguments changed.")
-    elif command == "generate":
+    elif command == "create":
         options = option_pairs(
             command_arguments,
-            {"--mcu", "--name", "--output-dir", "--board-profile", "--manual", "--plan"},
+            {"--mcu", "--name", "--output-dir", "--board-profile", "--manual", "--plan", "--jobs"},
         )
+        require(options["--jobs"] == "3", "PowerShell must preserve the requested build job count.")
         create_generated_project(options, state)
-    elif command == "module":
-        options = option_pairs(command_arguments, {"--project-dir", "--name", "--pack"})
-        create_module(options, state)
-    elif command == "integrate":
-        options = option_pairs(command_arguments, {"--project-dir", "--name"})
-        integrate_module(options, state)
-    elif command == "build":
-        options = option_pairs(command_arguments, {"--project-dir", "--jobs"})
-        create_build_artifacts(options, state)
 
     sequence.append(command)
     save_state(state_path, state)
@@ -212,8 +186,9 @@ def run_skill_invocation(arguments: list[str]) -> int:
     return 0
 
 
-def verify_contract(state_path: Path, project_dir: Path, module_name: str) -> None:
+def verify_contract(state_path: Path, project_dir: Path) -> None:
     state = load_state(state_path)
+    module_name = state["module_name"]
     require(state["sequence"] == EXPECTED_SEQUENCE, "PowerShell did not execute the complete command sequence.")
     require(normalized_path(project_dir) == normalized_path(state["project_dir"]), "Final project path changed.")
     require(len(list(project_dir.glob("*.ioc"))) == 1, "Generated project must contain one root .ioc file.")
@@ -225,6 +200,8 @@ def verify_contract(state_path: Path, project_dir: Path, module_name: str) -> No
     require(f"{module_name}_process();" in main_text, "Final main.c process call is missing.")
     artifacts = sorted(path.suffix for path in (project_dir / "build").iterdir() if path.is_file())
     require(artifacts == [".bin", ".elf", ".hex", ".map"], f"Unexpected artifact set: {artifacts}")
+    report = json.loads((project_dir / "codex-run-report.json").read_text(encoding="utf-8"))
+    require(report == {"command": "create", "status": "passed"}, "One-shot create report is invalid.")
     print("WINDOWS_SMOKE_ORCHESTRATION_PASS")
 
 
@@ -234,7 +211,6 @@ def parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify")
     verify.add_argument("--state", required=True)
     verify.add_argument("--project", required=True)
-    verify.add_argument("--module", required=True)
     return root
 
 
@@ -243,7 +219,7 @@ def main(arguments: list[str] | None = None) -> int:
     try:
         if raw_arguments and raw_arguments[0] == "verify":
             parsed = parser().parse_args(raw_arguments)
-            verify_contract(Path(parsed.state), Path(parsed.project), parsed.module)
+            verify_contract(Path(parsed.state), Path(parsed.project))
             return 0
         return run_skill_invocation(raw_arguments)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:

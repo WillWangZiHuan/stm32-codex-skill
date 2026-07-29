@@ -17,8 +17,9 @@ OPERATION_INSTANCE_PREFIX = re.compile(r"^[A-Z][A-Z0-9]*$")
 DIRECT_PIN_SIGNAL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 OPERATION_SIGNAL_SUFFIX = re.compile(r"^[A-Z][A-Z0-9]*$")
 PACKS_ROOT = Path(__file__).resolve().parents[1] / "packs"
-SUPPORTED_IOC_OVERRIDE_KINDS = frozenset({"gpio-initial-state", "timer-nvic-enable"})
-PACK_MANIFEST_SCHEMA_VERSION = 4
+SUPPORTED_IOC_OVERRIDE_KINDS = frozenset({"gpio-initial-state", "gpio-input-pull", "timer-nvic-enable"})
+SUPPORTED_BINDING_TYPES = frozenset({"identifier", "gpio-level", "uint"})
+PACK_MANIFEST_SCHEMA_VERSION = 5
 PLAN_RESOURCE_FIELDS = frozenset(
     {
         "operation_instance_prefixes",
@@ -143,6 +144,14 @@ def validate_pack(pack_dir: Path) -> dict[str, Any]:
     nonempty_string(manifest.get("summary"), f"{pack_id}.summary")
     nonempty_string_list(manifest.get("requires"), f"{pack_id}.requires")
     templates = nonempty_string_list(manifest.get("templates"), f"{pack_id}.templates")
+    binding_types = manifest.get("binding_types")
+    if not isinstance(binding_types, dict):
+        raise PackValidationError(f"{pack_id}.binding_types must be an object.")
+    for binding_name, binding_type in binding_types.items():
+        if not isinstance(binding_name, str) or not TEMPLATE_TOKEN.fullmatch("{{" + binding_name + "}}"):
+            raise PackValidationError(f"{pack_id}.binding_types contains an invalid template token name.")
+        if binding_type not in SUPPORTED_BINDING_TYPES:
+            raise PackValidationError(f"{pack_id}.binding_types.{binding_name} has unsupported type {binding_type!r}.")
     nonempty_string_list(manifest.get("verifications"), f"{pack_id}.verifications")
     manifest["plan_resources"] = validate_plan_resources(manifest.get("plan_resources"), f"{pack_id}.plan_resources")
     override_kinds = string_list(manifest.get("ioc_override_kinds"), f"{pack_id}.ioc_override_kinds")
@@ -171,6 +180,19 @@ def validate_pack(pack_dir: Path) -> dict[str, Any]:
         remainder = TEMPLATE_TOKEN.sub("", template_text)
         if "{{" in remainder or "}}" in remainder:
             raise PackValidationError(f"{pack_id}: template has a malformed placeholder: {path}")
+    external_tokens: set[str] = set()
+    for path in template_paths:
+        external_tokens.update(TEMPLATE_TOKEN.findall((pack_dir / path).read_text(encoding="utf-8")))
+    external_tokens -= {"MODULE_NAME", "MODULE_GUARD"}
+    if set(binding_types) != external_tokens:
+        missing = sorted(external_tokens - set(binding_types))
+        unexpected = sorted(set(binding_types) - external_tokens)
+        details: list[str] = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected {', '.join(unexpected)}")
+        raise PackValidationError(f"{pack_id}.binding_types must match template bindings ({'; '.join(details)}).")
     return manifest
 
 

@@ -34,8 +34,8 @@ class PackTests(unittest.TestCase):
     def test_validation_record_describes_current_evidence(self) -> None:
         validation_record = (Path(__file__).resolve().parents[1] / "VALIDATION.md").read_text(encoding="utf-8")
         for required_fragment in (
-            "74 deterministic tests",
-            "6 pack contracts",
+            "92 deterministic tests",
+            "8 pack contracts",
             "Windows smoke orchestration",
             "End-to-end I2C run",
             "Configuration verified",
@@ -54,10 +54,7 @@ class PackTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         for required_fragment in (
             '"doctor", "--strict"',
-            '"generate"',
-            '"module"',
-            '"integrate"',
-            '"build"',
+            '"create"',
             '"--cubemx"',
             '"--cubeide"',
             '"--board-profile"',
@@ -65,7 +62,7 @@ class PackTests(unittest.TestCase):
             '"--plan"',
             "WINDOWS_SMOKE_PASS",
             "Project directory already exists",
-            "Generation and compilation completed.",
+            "Generation, planned module integration, and compilation completed.",
         ):
             with self.subTest(required_fragment=required_fragment):
                 self.assertIn(required_fragment, script)
@@ -73,13 +70,18 @@ class PackTests(unittest.TestCase):
         self.assertNotIn("Invoke-Expression", script)
 
     def test_builtin_packs_satisfy_contract(self) -> None:
-        self.assertEqual(validate_packs.validate_packs(), ["gpio", "i2c", "pwm", "spi", "timer", "uart"])
+        self.assertEqual(
+            validate_packs.validate_packs(),
+            ["gpio", "gpio_input", "i2c", "pwm", "servo", "spi", "timer", "uart"],
+        )
 
     def test_builtin_packs_declare_only_supported_ioc_override_kinds(self) -> None:
         expected = {
             "gpio": ["gpio-initial-state"],
+            "gpio_input": ["gpio-input-pull"],
             "i2c": [],
             "pwm": [],
+            "servo": [],
             "spi": [],
             "timer": ["timer-nvic-enable"],
             "uart": [],
@@ -97,6 +99,12 @@ class PackTests(unittest.TestCase):
                 "required_operation_signal_suffixes": [],
                 "minimum_operation_pins": 0,
             },
+            "gpio_input": {
+                "operation_instance_prefixes": [],
+                "direct_pin_signals": ["GPIO_Input", *[f"GPIO_EXTI{index}" for index in range(16)]],
+                "required_operation_signal_suffixes": [],
+                "minimum_operation_pins": 0,
+            },
             "i2c": {
                 "operation_instance_prefixes": ["I2C"],
                 "direct_pin_signals": [],
@@ -105,6 +113,12 @@ class PackTests(unittest.TestCase):
             },
             "pwm": {
                 "operation_instance_prefixes": ["TIM", "LPTIM"],
+                "direct_pin_signals": [],
+                "required_operation_signal_suffixes": [],
+                "minimum_operation_pins": 1,
+            },
+            "servo": {
+                "operation_instance_prefixes": ["TIM"],
                 "direct_pin_signals": [],
                 "required_operation_signal_suffixes": [],
                 "minimum_operation_pins": 1,
@@ -140,11 +154,12 @@ class PackTests(unittest.TestCase):
             templates_dir.mkdir(parents=True)
             (pack_dir / "PACK.md").write_text("# Broken\n", encoding="utf-8")
             manifest = {
-                "schema_version": 4,
+                "schema_version": 5,
                 "id": "broken",
                 "summary": "Broken test fixture.",
                 "requires": ["One fact."],
                 "templates": ["templates/broken.c.tmpl"],
+                "binding_types": {},
                 "plan_resources": {
                     "operation_instance_prefixes": [],
                     "direct_pin_signals": [],
@@ -200,6 +215,19 @@ class PackTests(unittest.TestCase):
         self.assertIn("HAL_GPIO_TogglePin", gpio_source)
         self.assertNotIn("HAL_GPIO_EXTI_Callback", gpio_source)
         self.assertNotIn("HAL_GPIO_ReadPin", gpio_source)
+
+    def test_gpio_input_and_servo_templates_cover_debounce_events_and_microseconds(self) -> None:
+        packs = Path(__file__).resolve().parents[1] / "stm32-cubemx-build" / "packs"
+        gpio_input = (packs / "gpio_input" / "templates" / "gpio_input.c.tmpl").read_text(encoding="utf-8")
+        servo = (packs / "servo" / "templates" / "servo_output.c.tmpl").read_text(encoding="utf-8")
+        self.assertIn("HAL_GPIO_ReadPin", gpio_input)
+        self.assertIn("DEBOUNCE_MS", gpio_input)
+        self.assertIn("take_long_press", gpio_input)
+        self.assertNotIn("HAL_GPIO_EXTI_Callback", gpio_input)
+        self.assertIn("HAL_TIM_PWM_Start", servo)
+        self.assertIn("set_pulse_us", servo)
+        self.assertIn("1000U", servo)
+        self.assertIn("2000U", servo)
 
     def test_uart_template_keeps_timeout_and_interrupt_boundaries_explicit(self) -> None:
         uart_source = (

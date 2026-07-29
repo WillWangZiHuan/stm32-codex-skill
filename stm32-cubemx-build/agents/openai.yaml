@@ -1,4 +1,4 @@
 interface:
   display_name: "STM32 Manual-Driven Builder"
-  short_description: "Build manual-driven STM32 projects with CubeMX automation"
-  default_prompt: "Use $stm32-cubemx-build to turn my board manual and GPIO-output, UART, I2C, SPI, PWM, or timer request into a cited STM32 Makefile project, create the App module, and compile it."
+  short_description: "Build and revise cited STM32 CubeMX firmware"
+  default_prompt: "Use $stm32-cubemx-build to turn my board manual and peripheral request into a cited STM32 project, planned App modules, and compiled firmware in one run."

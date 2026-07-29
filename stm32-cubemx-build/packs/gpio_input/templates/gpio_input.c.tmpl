@@ -1,0 +1,81 @@
+#include "{{MODULE_NAME}}.h"
+
+static GPIO_PinState stable_level;
+static GPIO_PinState candidate_level;
+static uint32_t candidate_since_ms;
+static uint32_t active_since_ms;
+static bool pressed_pending;
+static bool released_pending;
+static bool long_press_pending;
+static bool long_press_reported;
+
+void {{MODULE_NAME}}_init(void)
+{
+  stable_level = HAL_GPIO_ReadPin({{GPIO_PORT}}, {{GPIO_PIN}});
+  candidate_level = stable_level;
+  candidate_since_ms = HAL_GetTick();
+  active_since_ms = candidate_since_ms;
+  pressed_pending = false;
+  released_pending = false;
+  long_press_pending = false;
+  long_press_reported = false;
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+  uint32_t now = HAL_GetTick();
+  GPIO_PinState raw_level = HAL_GPIO_ReadPin({{GPIO_PORT}}, {{GPIO_PIN}});
+
+  if (raw_level != candidate_level) {
+    candidate_level = raw_level;
+    candidate_since_ms = now;
+  }
+  if ((candidate_level != stable_level) && ((uint32_t)(now - candidate_since_ms) >= {{DEBOUNCE_MS}}U)) {
+    stable_level = candidate_level;
+    if (stable_level == {{ACTIVE_LEVEL}}) {
+      pressed_pending = true;
+      active_since_ms = now;
+      long_press_reported = false;
+    } else {
+      released_pending = true;
+      long_press_reported = false;
+    }
+  }
+  if ((stable_level == {{ACTIVE_LEVEL}}) && !long_press_reported &&
+      ((uint32_t)(now - active_since_ms) >= {{LONG_PRESS_MS}}U)) {
+    long_press_pending = true;
+    long_press_reported = true;
+  }
+}
+
+void {{MODULE_NAME}}_notify_exti(void)
+{
+  candidate_level = HAL_GPIO_ReadPin({{GPIO_PORT}}, {{GPIO_PIN}});
+  candidate_since_ms = HAL_GetTick();
+}
+
+bool {{MODULE_NAME}}_is_active(void)
+{
+  return stable_level == {{ACTIVE_LEVEL}};
+}
+
+bool {{MODULE_NAME}}_take_pressed(void)
+{
+  bool pending = pressed_pending;
+  pressed_pending = false;
+  return pending;
+}
+
+bool {{MODULE_NAME}}_take_released(void)
+{
+  bool pending = released_pending;
+  released_pending = false;
+  return pending;
+}
+
+bool {{MODULE_NAME}}_take_long_press(void)
+{
+  bool pending = long_press_pending;
+  long_press_pending = false;
+  return pending;
+}

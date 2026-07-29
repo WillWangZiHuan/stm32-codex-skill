@@ -19,9 +19,9 @@
 2. **Plan ownership** — Select one or more contract-valid packs. Map every
    peripheral operation, direct pin assignment, and semantic `ioc_overrides`
    entry to its owning pack and the pack's `plan_resources` declaration.
-3. **Generation** — Create a fresh CubeMX project, evaluate generated-file
-   assertions, and write `codex-stm32-project.json` after successful
-   verification.
+3. **Generation** — Resolve the concrete MCU through the CubeMX family index,
+   keep SWD enabled, create a fresh project, evaluate generated-file assertions,
+   and write `codex-stm32-project.json` after verification.
 4. **Provenance** — Record the MCU, hashes of the manual/profile/plan, selected
    pack fingerprints, plan-declared modules, CubeMX identifier inventory, root
    `.ioc`, CubeMX version facts, Makefile baseline, generated source, linker,
@@ -39,6 +39,11 @@
    `HAL_TIM_PeriodElapsedCallback` and route timer modules through it.
 9. **Build** — Reload the project provenance and evaluate the recorded
    configuration and build inputs before Make runs.
+10. **Revision** — Regenerate and compile a sibling project, restore `App/`
+    and matching `USER CODE` regions, produce a diff, and require a new complete
+    backup directory before applying.
+11. **Flash** — Require an exact artifact-hash authorization, expected target
+    ID, voltage threshold, and pre-flash backup before write/verify/reset.
 
 ## Generated-file verification
 

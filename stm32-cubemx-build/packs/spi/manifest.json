@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "id": "spi",
   "summary": "Configure one evidence-backed SPI master bus and create an explicit full-duplex HAL transfer module.",
   "requires": [
@@ -12,6 +12,7 @@
     "templates/spi_bus.h.tmpl",
     "templates/spi_bus.c.tmpl"
   ],
+  "binding_types": {"SPI_HANDLE": "identifier"},
   "plan_resources": {
     "operation_instance_prefixes": [
       "SPI"

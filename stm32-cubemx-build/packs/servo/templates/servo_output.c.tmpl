@@ -1,0 +1,40 @@
+#include "{{MODULE_NAME}}.h"
+
+extern TIM_HandleTypeDef {{TIM_HANDLE}};
+
+void {{MODULE_NAME}}_init(void)
+{
+  (void){{MODULE_NAME}}_start();
+  {{MODULE_NAME}}_set_angle_degrees(90U);
+}
+
+void {{MODULE_NAME}}_process(void)
+{
+}
+
+HAL_StatusTypeDef {{MODULE_NAME}}_start(void)
+{
+  return HAL_TIM_PWM_Start(&{{TIM_HANDLE}}, {{TIM_CHANNEL}});
+}
+
+void {{MODULE_NAME}}_set_pulse_us(uint16_t pulse_us)
+{
+  uint32_t period_counts = __HAL_TIM_GET_AUTORELOAD(&{{TIM_HANDLE}}) + 1U;
+  uint32_t compare;
+
+  if (pulse_us < 1000U) {
+    pulse_us = 1000U;
+  } else if (pulse_us > 2000U) {
+    pulse_us = 2000U;
+  }
+  compare = (uint32_t)(((uint64_t)period_counts * pulse_us * 50U) / 1000000U);
+  __HAL_TIM_SET_COMPARE(&{{TIM_HANDLE}}, {{TIM_CHANNEL}}, compare);
+}
+
+void {{MODULE_NAME}}_set_angle_degrees(uint8_t angle_degrees)
+{
+  if (angle_degrees > 180U) {
+    angle_degrees = 180U;
+  }
+  {{MODULE_NAME}}_set_pulse_us((uint16_t)(1000U + (((uint32_t)angle_degrees * 1000U) / 180U)));
+}

@@ -87,8 +87,6 @@ jobs:
             -Mcu "STM32F401RETx" `
             -OutputDir $outputDir `
             -ProjectName "windows_contract" `
-            -ModuleName "status_output" `
-            -Pack "gpio" `
             -CubeMX $fakeCubeMX `
             -CubeIDE $fakeCubeIDE `
             -Python $fakePython `
@@ -100,5 +98,4 @@ jobs:
           $projectDir = Join-Path $outputDir "windows_contract"
           python tests/windows_smoke_contract.py verify `
             --state $state `
-            --project $projectDir `
-            --module "status_output"
+            --project $projectDir

@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "id": "timer",
   "summary": "Configure one base timer and provide a non-blocking periodic-dispatch module.",
   "requires": [
@@ -11,6 +11,7 @@
     "templates/timer_dispatcher.h.tmpl",
     "templates/timer_dispatcher.c.tmpl"
   ],
+  "binding_types": {"TIM_HANDLE": "identifier", "IRQ_NAME": "identifier"},
   "plan_resources": {
     "operation_instance_prefixes": [
       "TIM",

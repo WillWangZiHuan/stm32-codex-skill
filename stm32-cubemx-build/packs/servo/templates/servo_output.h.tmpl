@@ -1,0 +1,14 @@
+#ifndef CODEX_APP_{{MODULE_GUARD}}_H
+#define CODEX_APP_{{MODULE_GUARD}}_H
+
+#include <stdint.h>
+
+#include "main.h"
+
+void {{MODULE_NAME}}_init(void);
+void {{MODULE_NAME}}_process(void);
+HAL_StatusTypeDef {{MODULE_NAME}}_start(void);
+void {{MODULE_NAME}}_set_pulse_us(uint16_t pulse_us);
+void {{MODULE_NAME}}_set_angle_degrees(uint8_t angle_degrees);
+
+#endif /* CODEX_APP_{{MODULE_GUARD}}_H */

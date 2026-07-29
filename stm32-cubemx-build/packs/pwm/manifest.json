@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "id": "pwm",
   "summary": "Configure one evidence-backed timer PWM output and create a duty-cycle module.",
   "requires": [
@@ -11,6 +11,7 @@
     "templates/pwm_output.h.tmpl",
     "templates/pwm_output.c.tmpl"
   ],
+  "binding_types": {"TIM_HANDLE": "identifier", "TIM_CHANNEL": "identifier"},
   "plan_resources": {
     "operation_instance_prefixes": [
       "TIM",

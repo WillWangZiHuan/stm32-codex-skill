@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -27,6 +29,7 @@ MCU_IDENTIFIER = re.compile(r"^[A-Za-z0-9()_-]+$")
 MODULE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 PIN_IDENTIFIER = re.compile(r"^P[A-Z][0-9]{1,2}$")
 GPIO_INITIAL_STATE_KEY = re.compile(r"^(P[A-Z][0-9]{1,2})\.(GPIOParameters|PinState)$")
+GPIO_INPUT_PULL_KEY = re.compile(r"^(P[A-Z][0-9]{1,2})\.(GPIOParameters|GPIO_PuPd)$")
 NVIC_TIMER_IRQ_KEY = re.compile(r"^NVIC\.([A-Za-z][A-Za-z0-9_]*_IRQn)$")
 TIMER_INSTANCE = re.compile(r"^(?:TIM|LPTIM)[0-9]+$")
 CUBE_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -44,6 +47,10 @@ C_NONCODE = re.compile(
 C_PREPROCESSOR_DIRECTIVE = re.compile(r"^[ \t]*\#[^\r\n]*(?:\\\r?\n[^\r\n]*)*", re.MULTILINE)
 USER_CODE_REGION_CONTENT = re.compile(
     r"(?P<begin>/\* USER CODE BEGIN [^\r\n]*?\*/).*?(?P<end>/\* USER CODE END [^\r\n]*?\*/)",
+    re.DOTALL,
+)
+LABELED_USER_CODE_REGION = re.compile(
+    r"/\* USER CODE BEGIN (?P<label>[^\r\n*]+?) \*/(?P<content>.*?)/\* USER CODE END (?P=label) \*/",
     re.DOTALL,
 )
 C_KEYWORDS = {
@@ -84,17 +91,32 @@ C_KEYWORDS = {
 }
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 TIM_PERIOD_ELAPSED_CALLBACK = re.compile(r"\bvoid\s+HAL_TIM_PeriodElapsedCallback\s*\(")
-TIMING_PACK_IDS = frozenset({"pwm", "timer"})
+TIMING_PACK_IDS = frozenset({"pwm", "servo", "timer"})
 STM32F4_APB1_TIMER_INSTANCES = frozenset(
     {"TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM12", "TIM13", "TIM14"}
 )
 STM32F4_APB2_TIMER_INSTANCES = frozenset({"TIM1", "TIM8", "TIM9", "TIM10", "TIM11"})
+STM32F1_APB1_TIMER_INSTANCES = frozenset(
+    {"TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM12", "TIM13", "TIM14"}
+)
+STM32F1_APB2_TIMER_INSTANCES = frozenset(
+    {"TIM1", "TIM8", "TIM9", "TIM10", "TIM11", "TIM15", "TIM16", "TIM17"}
+)
+ADVANCED_TIMER_INSTANCES = frozenset({"TIM1", "TIM8"})
+SWD_RESERVED_PINS = frozenset({"PA13", "PA14"})
+SWD_IOC_VALUE = "Serial Wire"
+SWD_CUBE_MODE = "Serial Wire"
+TEMPORARY_CLEANUP_DELAYS_SECONDS = (0.05, 0.1, 0.2, 0.4, 0.8, 1.45)
 MAX_TIMER_COUNTER_VALUE = 0xFFFF
 MAX_TIMING_TOLERANCE_PPM = 100_000
+DEFAULT_CUBEMX_TIMEOUT_SECONDS = 180
+FLASH_BASE_ADDRESS = "0x08000000"
+TARGET_DEVICE_ID = re.compile(r"Device\s+ID\s*:\s*(0x[0-9A-Fa-f]+)", re.IGNORECASE)
+TARGET_VOLTAGE = re.compile(r"Voltage\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*V", re.IGNORECASE)
 
 MODULES_MAKEFILE = "codex-modules.mk"
 PROJECT_PROVENANCE_FILE = "codex-stm32-project.json"
-PROJECT_PROVENANCE_SCHEMA_VERSION = 11
+PROJECT_PROVENANCE_SCHEMA_VERSION = 12
 CONFIGURATION_PLAN_SCHEMA_VERSION = 5
 MAKEFILE_MARKER_BEGIN = "# >>> CODEX STM32 MODULES BEGIN"
 MAKEFILE_MARKER_END = "# <<< CODEX STM32 MODULES END"
@@ -278,6 +300,29 @@ def discover_tools(cubemx_override: str | None = None, cubeide_override: str | N
     )
 
 
+def discover_cubeprogrammer(override: str | None, cubeide_override: str | None) -> str | None:
+    overridden = executable_override(override, "STM32CubeProgrammer")
+    if overridden:
+        return str(overridden)
+
+    toolchain = discover_tools(None, cubeide_override)
+    cubeide = Path(toolchain.cubeide) if toolchain.cubeide else None
+    host = toolchain.platform
+    if host == "Darwin":
+        plugin_root = cubeide.parents[1] / "Eclipse" / "plugins" if cubeide else None
+        executable = "STM32_Programmer_CLI"
+    else:
+        plugin_root = cubeide.parent / "plugins" if cubeide else None
+        executable = "STM32_Programmer_CLI.exe"
+    bundled = plugin_tool(
+        plugin_root,
+        "com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.",
+        executable,
+    )
+    fallback = command_path(executable, "STM32_Programmer_CLI")
+    return str(bundled or fallback) if (bundled or fallback) else None
+
+
 def xml_local_name(element: ET.Element) -> str:
     return element.tag.rsplit("}", 1)[-1]
 
@@ -308,26 +353,58 @@ def cubemx_database_root(cubemx_executable: str) -> Path:
 
 
 def cubemx_refname_matches_mcu(ref_name: str, mcu: str) -> bool:
-    """Match CubeMX RefName ranges such as STM32F401R(D-E)Tx against a concrete MCU."""
+    """Match CubeMX grouped RefNames against one concrete MCU identifier."""
     if ref_name == mcu:
         return True
     pattern_parts: list[str] = []
     position = 0
-    found_range = False
-    for match in re.finditer(r"\(([A-Za-z0-9])-([A-Za-z0-9])\)", ref_name):
-        found_range = True
+    found_group = False
+    for match in re.finditer(r"\(([A-Za-z0-9,-]+)\)", ref_name):
+        found_group = True
         pattern_parts.append(re.escape(ref_name[position : match.start()]))
-        first, last = sorted((ord(match.group(1)), ord(match.group(2))))
-        variants = "".join(chr(codepoint) for codepoint in range(first, last + 1))
-        pattern_parts.append(f"[{re.escape(variants)}]")
+        group = match.group(1)
+        comma_segments = group.split(",")
+        variants: set[str] = set()
+        for segment in comma_segments:
+            tokens = segment.split("-")
+            if len(tokens) == 2:
+                first, last = sorted((ord(tokens[0]), ord(tokens[1])))
+                variants.update(chr(codepoint) for codepoint in range(first, last + 1))
+            else:
+                variants.update(tokens)
+        pattern_parts.append(f"[{re.escape(''.join(sorted(variants)))}]")
         position = match.end()
-    if not found_range:
+    if not found_group:
         return False
     pattern_parts.append(re.escape(ref_name[position:]))
     return re.fullmatch("".join(pattern_parts), mcu) is not None
 
 
+def cubemx_family_refname(mcu_database: Path, mcu: str) -> str | None:
+    """Resolve a concrete CubeMX RefName to its grouped MCU description name."""
+    families_path = mcu_database / "families.xml"
+    if not families_path.is_file():
+        return None
+    root = parse_cubemx_xml(families_path, "CubeMX MCU family index")
+    names = {
+        element.attrib["Name"]
+        for element in root.iter()
+        if xml_local_name(element) == "Mcu"
+        and element.attrib.get("RefName") == mcu
+        and element.attrib.get("Name")
+    }
+    if len(names) > 1:
+        raise ValueError(f"CubeMX families.xml maps {mcu} to multiple MCU descriptions: {', '.join(sorted(names))}.")
+    return next(iter(names), None)
+
+
 def cubemx_mcu_description_path(mcu_database: Path, mcu: str) -> Path:
+    family_refname = cubemx_family_refname(mcu_database, mcu)
+    if family_refname:
+        indexed_path = mcu_database / f"{family_refname}.xml"
+        if indexed_path.is_file():
+            return indexed_path
+
     matches: list[Path] = []
     for candidate in sorted(mcu_database.glob("*.xml")):
         root = parse_cubemx_xml(candidate, "CubeMX MCU description")
@@ -411,6 +488,26 @@ def cubemx_parameter_names(
     return names
 
 
+def cubemx_parameter_defaults(
+    mcu_database: Path,
+    mcu: str,
+    instance: str,
+    mcu_description: Path | None = None,
+) -> dict[str, set[str]]:
+    """Return installed IP defaults; multiple values mean the default is condition-dependent."""
+    modes_path = cubemx_ip_modes_path(mcu_database, mcu, instance, mcu_description)
+    modes_root = parse_cubemx_xml(modes_path, f"CubeMX mode database for {instance}")
+    defaults: dict[str, set[str]] = {}
+    for element in modes_root.iter():
+        if xml_local_name(element) != "RefParameter":
+            continue
+        name = element.attrib.get("Name", "").strip()
+        value = element.attrib.get("DefaultValue", "").strip()
+        if name and value and value != "null":
+            defaults.setdefault(name, set()).add(value)
+    return defaults
+
+
 def validate_operation_modes_against_cubemx_database(
     configuration: dict[str, Any],
     mcu: str,
@@ -456,10 +553,17 @@ def validate_operation_parameters_against_cubemx_database(
     database = mcu_database or cubemx_database_root(cubemx_executable)
     description = mcu_description or cubemx_mcu_description_path(database, mcu)
     names_by_instance: dict[str, set[str]] = {}
+    defaults_by_instance: dict[str, dict[str, set[str]]] = {}
     for operation_index, operation in enumerate(configuration["operations"], start=1):
         instance = operation["instance"]
         if instance not in names_by_instance:
             names_by_instance[instance] = cubemx_parameter_names(
+                database,
+                mcu,
+                instance,
+                description,
+            )
+            defaults_by_instance[instance] = cubemx_parameter_defaults(
                 database,
                 mcu,
                 instance,
@@ -472,6 +576,8 @@ def validate_operation_parameters_against_cubemx_database(
                     f"operations[{operation_index}].parameters[{parameter_index}].name {parameter['name']!r} "
                     f"is not declared by the local CubeMX mode database for {instance} on {mcu}."
                 )
+            defaults = defaults_by_instance[instance].get(parameter["name"], set())
+            parameter["verified_default"] = parameter["value"] if defaults == {parameter["value"]} else None
 
 
 def cubemx_pin_signals(mcu_description: Path) -> dict[str, set[str]]:
@@ -493,6 +599,18 @@ def cubemx_pin_signals(mcu_description: Path) -> dict[str, set[str]]:
     return pin_signals
 
 
+def cubemx_pin_supports_signal(pin: str, signal: str, available_signals: set[str]) -> bool:
+    if signal in available_signals:
+        return True
+    if "GPIO" not in available_signals:
+        return False
+    if signal in {"GPIO_Output", "GPIO_Input"}:
+        return True
+    exti_match = re.fullmatch(r"GPIO_EXTI([0-9]{1,2})", signal)
+    pin_number = re.search(r"([0-9]{1,2})$", pin)
+    return bool(exti_match and pin_number and exti_match.group(1) == pin_number.group(1))
+
+
 def validate_operation_pins_against_cubemx_database(
     configuration: dict[str, Any],
     mcu: str,
@@ -502,7 +620,8 @@ def validate_operation_pins_against_cubemx_database(
     mcu_description: Path | None = None,
 ) -> None:
     """Validate operation pin and signal pairs against the selected MCU."""
-    if not configuration["operations"]:
+    pin_assignments = configuration.get("pin_assignments", [])
+    if not configuration["operations"] and not pin_assignments:
         return
     database = mcu_database or cubemx_database_root(cubemx_executable)
     description = mcu_description or cubemx_mcu_description_path(database, mcu)
@@ -521,6 +640,14 @@ def validate_operation_pins_against_cubemx_database(
                     f"operations[{operation_index}].pins[{pin_index}] assigns {pin} to {signal}; "
                     f"choose a signal listed for this pin in the local CubeMX MCU description for {mcu}."
                 )
+    for assignment_index, assignment in enumerate(pin_assignments, start=1):
+        pin = assignment["pin"]
+        signal = assignment["signal"]
+        if not cubemx_pin_supports_signal(pin, signal, pin_signals.get(pin, set())):
+            raise ValueError(
+                f"pin_assignments[{assignment_index}] assigns {pin} to {signal}; choose a signal listed for this "
+                f"pin in the local CubeMX MCU description for {mcu}."
+            )
 
 
 def validate_operations_against_cubemx_database(
@@ -529,7 +656,7 @@ def validate_operations_against_cubemx_database(
     cubemx_executable: str,
 ) -> None:
     """Validate local CubeMX operation facts before it can create a project."""
-    if not configuration["operations"]:
+    if not configuration["operations"] and not configuration.get("pin_assignments", []):
         return
     database = cubemx_database_root(cubemx_executable)
     mcu_description = cubemx_mcu_description_path(database, mcu)
@@ -598,8 +725,25 @@ def build_environment(toolchain: Toolchain) -> dict[str, str]:
 
 def validated_project_name(name: str) -> str:
     if not PROJECT_NAME.fullmatch(name):
-        raise ValueError("Use a project name that starts with a letter and contains letters, numbers, underscores, or hyphens.")
+        suggestion = suggested_project_name(name)
+        raise ValueError(
+            "Use a project name that starts with a letter and contains letters, numbers, underscores, or hyphens. "
+            f"Suggested name: {suggestion}"
+        )
     return name
+
+
+def suggested_project_name(name: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", name.strip()).strip("_-")
+    if not normalized:
+        normalized = "project"
+    if not normalized[0].isalpha():
+        normalized = f"project_{normalized}"
+    return normalized
+
+
+def resolved_project_name(name: str, normalize: bool) -> str:
+    return validated_project_name(suggested_project_name(name) if normalize else name)
 
 
 def validated_mcu_identifier(mcu: str) -> str:
@@ -688,18 +832,29 @@ def nonnegative_plan_integer(value: Any, label: str) -> int:
     return value
 
 
-def stm32f4_timer_clock_property(mcu: str, instance: str, label: str) -> str:
-    if not mcu.upper().startswith("STM32F4"):
-        raise ValueError(
-            f"{label} frequency proof currently covers STM32F4 TIM instances with an unprescaled APB clock."
-        )
-    if instance in STM32F4_APB1_TIMER_INSTANCES:
-        return "RCC.APB1Freq_Value"
-    if instance in STM32F4_APB2_TIMER_INSTANCES:
-        return "RCC.APB2Freq_Value"
-    raise ValueError(
-        f"{label} frequency proof currently covers STM32F4 TIM1-TIM14; select one of those instances."
-    )
+def timer_clock_model(mcu: str, instance: str, label: str) -> dict[str, Any]:
+    family = mcu.upper()[:7]
+    if family == "STM32F1":
+        apb1_instances = STM32F1_APB1_TIMER_INSTANCES
+        apb2_instances = STM32F1_APB2_TIMER_INSTANCES
+    elif family == "STM32F4":
+        apb1_instances = STM32F4_APB1_TIMER_INSTANCES
+        apb2_instances = STM32F4_APB2_TIMER_INSTANCES
+    else:
+        raise ValueError(f"{label} frequency proof supports STM32F1 and STM32F4 timer clock trees.")
+    if instance in apb1_instances:
+        bus = "APB1"
+    elif instance in apb2_instances:
+        bus = "APB2"
+    else:
+        raise ValueError(f"{label} has no verified {family} clock-bus mapping for {instance}.")
+    return {
+        "bus": bus,
+        "bus_clock_property": f"RCC.{bus}Freq_Value",
+        "timer_clock_property": f"RCC.{bus}TimFreq_Value",
+        "divider_property": f"RCC.{bus}CLKDivider",
+        "requires_moe": instance in ADVANCED_TIMER_INSTANCES,
+    }
 
 
 def normalized_timer_timing(
@@ -759,6 +914,7 @@ def normalized_timer_timing(
             )
         counters[field_name] = counter_value
 
+    clock_model = timer_clock_model(mcu, instance, label)
     return {
         "timer_input_hz": timer_input_hz,
         "target_hz": target_hz,
@@ -767,7 +923,7 @@ def normalized_timer_timing(
         "period_parameter": period_parameter,
         "prescaler": counters["prescaler_parameter"],
         "period": counters["period_parameter"],
-        "clock_property": stm32f4_timer_clock_property(mcu, instance, label),
+        **clock_model,
     }
 
 
@@ -776,6 +932,70 @@ def normalized_ioc_property_value(value: Any, label: str) -> str:
     if not IOC_PROPERTY_VALUE.fullmatch(text):
         raise ValueError(f"{label} contains unsupported .ioc property characters.")
     return text
+
+
+def normalized_string_set(value: Any, label: str) -> set[str]:
+    result: set[str] = set()
+    for index, item in enumerate(plan_list(value, label), start=1):
+        text = plan_string(item, f"{label}[{index}]")
+        if text in result:
+            raise ValueError(f"{label} repeats {text!r}.")
+        result.add(text)
+    return result
+
+
+def configuration_safety(
+    plan: dict[str, Any],
+    profile_pins: dict[str, dict[str, Any]],
+    used_pins: set[str],
+) -> dict[str, Any]:
+    raw_safety = plan_object(plan.get("safety", {}), "safety")
+    acknowledged_conflicts = normalized_string_set(
+        raw_safety.get("acknowledged_conflicts", []),
+        "safety.acknowledged_conflicts",
+    )
+    external_supply_pins = normalized_string_set(
+        raw_safety.get("external_supply_pins", []),
+        "safety.external_supply_pins",
+    )
+    unknown_supply_pins = sorted(external_supply_pins - used_pins)
+    if unknown_supply_pins:
+        raise ValueError(
+            "safety.external_supply_pins must reference pins used by this plan; unknown: "
+            f"{', '.join(unknown_supply_pins)}."
+        )
+    connections: list[dict[str, Any]] = []
+    for pin_name in sorted(used_pins):
+        pin = profile_pins[pin_name]
+        electrical = pin["electrical"]
+        missing_conflicts = sorted(set(electrical["conflicts"]) - acknowledged_conflicts)
+        if missing_conflicts:
+            raise ValueError(
+                f"Configuration plan uses {pin_name} ({pin['silkscreen']}) with unacknowledged conflict(s): "
+                f"{', '.join(missing_conflicts)}."
+            )
+        if electrical["external_supply_required"] and pin_name not in external_supply_pins:
+            raise ValueError(
+                f"Configuration plan uses {pin_name} ({pin['silkscreen']}) for a load that requires an external "
+                "supply; add the pin to safety.external_supply_pins after checking supply voltage and common ground."
+            )
+        connections.append(
+            {
+                "pin": pin_name,
+                "board_signal": pin["board_signal"],
+                "silkscreen": pin["silkscreen"],
+                "connector": pin["connector"],
+                "position_note": pin["position_note"],
+                "manual_figure": pin["manual_figure"],
+                "shared_with": pin["shared_with"],
+                "electrical": electrical,
+            }
+        )
+    return {
+        "acknowledged_conflicts": sorted(acknowledged_conflicts),
+        "external_supply_pins": sorted(external_supply_pins),
+        "connections": connections,
+    }
 
 
 def selected_capability_packs(plan: dict[str, Any]) -> list[str]:
@@ -884,6 +1104,11 @@ def normalized_ioc_overrides(
         for assignment in pin_assignments
         if assignment["signal"] == "GPIO_Output"
     }
+    gpio_input_packs = {
+        assignment["pin"]: assignment["pack"]
+        for assignment in pin_assignments
+        if assignment["signal"] == "GPIO_Input" or assignment["signal"].startswith("GPIO_EXTI")
+    }
     timer_instance_packs = {
         operation["instance"]: operation["pack"]
         for operation in operations
@@ -892,6 +1117,7 @@ def normalized_ioc_overrides(
     normalized: list[dict[str, str]] = []
     seen_keys: set[str] = set()
     gpio_properties: dict[str, set[str]] = {}
+    gpio_input_properties: dict[str, set[str]] = {}
 
     for override_index, raw_override in enumerate(raw_overrides, start=1):
         label = f"ioc_overrides[{override_index}]"
@@ -934,6 +1160,20 @@ def normalized_ioc_overrides(
             if property_name == "PinState" and value not in {"GPIO_PIN_SET", "GPIO_PIN_RESET"}:
                 raise ValueError(f"{label}.value for {key} must be GPIO_PIN_SET or GPIO_PIN_RESET.")
             gpio_properties.setdefault(pin, set()).add(property_name)
+        elif kind == "gpio-input-pull":
+            match = GPIO_INPUT_PULL_KEY.fullmatch(key)
+            if not match:
+                raise ValueError(f"{label}.key must be <planned GPIO input pin>.GPIOParameters or .GPIO_PuPd.")
+            pin, property_name = match.groups()
+            if pin not in gpio_input_packs:
+                raise ValueError(f"{label}.key must reference a pin assigned to GPIO_Input or GPIO_EXTI in this plan.")
+            if gpio_input_packs[pin] != pack_id:
+                raise ValueError(f"{label}.pack must own the matching GPIO input pin {pin}.")
+            if property_name == "GPIOParameters" and value != "GPIO_PuPd":
+                raise ValueError(f"{label}.value for {key} must be GPIO_PuPd.")
+            if property_name == "GPIO_PuPd" and value not in {"GPIO_NOPULL", "GPIO_PULLUP", "GPIO_PULLDOWN"}:
+                raise ValueError(f"{label}.value for {key} must be GPIO_NOPULL, GPIO_PULLUP, or GPIO_PULLDOWN.")
+            gpio_input_properties.setdefault(pin, set()).add(property_name)
         elif kind == "timer-nvic-enable":
             match = NVIC_TIMER_IRQ_KEY.fullmatch(key)
             if not match:
@@ -965,6 +1205,13 @@ def normalized_ioc_overrides(
                 f"gpio-initial-state overrides for {pin} must declare both GPIOParameters and PinState; "
                 f"missing {', '.join(sorted(missing))}."
             )
+    for pin, properties in gpio_input_properties.items():
+        missing = {"GPIOParameters", "GPIO_PuPd"} - properties
+        if missing:
+            raise ValueError(
+                f"gpio-input-pull overrides for {pin} must declare both GPIOParameters and GPIO_PuPd; "
+                f"missing {', '.join(sorted(missing))}."
+            )
     return normalized
 
 
@@ -989,6 +1236,14 @@ def template_external_binding_names(pack_id: str) -> set[str]:
     header_tokens = template_tokens(header_template.read_text(encoding="utf-8"), header_template)
     source_tokens = template_tokens(source_template.read_text(encoding="utf-8"), source_template)
     return (header_tokens | source_tokens) - CORE_TEMPLATE_BINDINGS
+
+
+def pack_binding_types(pack_id: str) -> dict[str, str]:
+    try:
+        manifest = validate_pack(PACKS_ROOT / pack_id)
+    except PackValidationError as error:
+        raise ValueError(f"Capability pack {pack_id} has an invalid binding contract: {error}") from error
+    return dict(manifest["binding_types"])
 
 
 def normalized_planned_modules(
@@ -1016,24 +1271,38 @@ def normalized_planned_modules(
         if pack_id not in selected_pack_set:
             raise ValueError(f"{module_label}.pack must be selected in packs.")
 
-        expected_bindings = template_external_binding_names(pack_id)
+        binding_types = pack_binding_types(pack_id)
+        expected_bindings = set(binding_types)
         raw_bindings = plan_object(
             plan_required(module, "bindings", f"{module_label}.bindings"),
             f"{module_label}.bindings",
         )
-        bindings: dict[str, str] = {}
+        bindings: dict[str, Any] = {}
         for raw_key, raw_value in raw_bindings.items():
             if not isinstance(raw_key, str) or not TEMPLATE_TOKEN_NAME.fullmatch(raw_key):
                 raise ValueError(f"{module_label}.bindings names must use uppercase letters, numbers, or underscores.")
             if raw_key in CORE_TEMPLATE_BINDINGS:
                 raise ValueError(f"{module_label}.bindings.{raw_key} derives from name and is added by the renderer.")
-            identifier = generated_c_identifier(raw_value, f"{module_label}.bindings.{raw_key}")
-            if generated_identifiers is not None and identifier not in generated_identifiers:
-                raise ValueError(
-                    f"{module_label}.bindings.{raw_key} must reference an identifier recorded from this project's "
-                    "verified CubeMX-generated source."
-                )
-            bindings[raw_key] = identifier
+            binding_type = binding_types.get(raw_key)
+            if binding_type == "identifier":
+                identifier = generated_c_identifier(raw_value, f"{module_label}.bindings.{raw_key}")
+                if generated_identifiers is not None and identifier not in generated_identifiers:
+                    raise ValueError(
+                        f"{module_label}.bindings.{raw_key} must reference an identifier recorded from this project's "
+                        "verified CubeMX-generated source."
+                    )
+                bindings[raw_key] = identifier
+            elif binding_type == "gpio-level":
+                level = plan_string(raw_value, f"{module_label}.bindings.{raw_key}")
+                if level not in {"GPIO_PIN_RESET", "GPIO_PIN_SET"}:
+                    raise ValueError(f"{module_label}.bindings.{raw_key} must be GPIO_PIN_RESET or GPIO_PIN_SET.")
+                bindings[raw_key] = level
+            elif binding_type == "uint":
+                bindings[raw_key] = nonnegative_plan_integer(raw_value, f"{module_label}.bindings.{raw_key}")
+            elif binding_type is not None:
+                raise AssertionError(f"Unhandled pack binding type: {binding_type}")
+            else:
+                bindings[raw_key] = raw_value
 
         missing = sorted(expected_bindings - bindings.keys())
         if missing:
@@ -1352,6 +1621,7 @@ def project_provenance_record(
         "generated_build_inputs_sha256": generated_build_input_fingerprint(project_dir),
         "ioc_sha256": ioc_facts["ioc_sha256"],
         "generator": ioc_facts["generator"],
+        "safety": configuration["safety"],
         "packs": [
             {"id": pack_id, "content_sha256": pack_contract_fingerprint(pack_id)}
             for pack_id in configuration["packs"]
@@ -1637,6 +1907,8 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
                 raise ValueError(f"operations[{operation_index}].pins[{pin_index}].pin must look like PA0 or PB12.")
             if pin_name in seen_pins:
                 raise ValueError(f"Configuration plan assigns {pin_name} more than once.")
+            if pin_name in SWD_RESERVED_PINS:
+                raise ValueError(f"Configuration plan must keep {pin_name} reserved for Serial Wire debug.")
             seen_pins.add(pin_name)
             profile_pin = profile_pins.get(pin_name)
             if profile_pin is None:
@@ -1727,6 +1999,8 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
             raise ValueError(f"pin_assignments[{assignment_index}].pin must look like PA0 or PB12.")
         if pin_name in seen_pins:
             raise ValueError(f"Configuration plan assigns {pin_name} more than once.")
+        if pin_name in SWD_RESERVED_PINS:
+            raise ValueError(f"Configuration plan must keep {pin_name} reserved for Serial Wire debug.")
         seen_pins.add(pin_name)
         profile_pin = profile_pins.get(pin_name)
         if profile_pin is None:
@@ -1740,6 +2014,10 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
             f"{assignment_label}.signal",
         )
         require_pack_direct_pin_signal(pack_id, signal, assignment_label, pack_manifests)
+        if pack_id == "gpio_input" and profile_pin.get("active_level") not in {"high", "low"}:
+            raise ValueError(
+                f"board-profile.json must declare active_level high or low for GPIO input {pin_name}."
+            )
         normalized_pin_assignments.append({"pack": pack_id, "pin": pin_name, "signal": signal})
 
     verifications = plan_list(plan_required(plan, "verifications", "verifications"), "verifications")
@@ -1757,6 +2035,7 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
         normalized_pin_assignments,
     )
     require_ioc_override_verifications(normalized_overrides, normalized_verifications)
+    safety = configuration_safety(plan, profile_pins, seen_pins)
     return {
         "mcu": plan_mcu,
         "plan_sha256": hashlib.sha256(raw_bytes).hexdigest(),
@@ -1766,11 +2045,12 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
         "pin_assignments": normalized_pin_assignments,
         "ioc_overrides": normalized_overrides,
         "verifications": normalized_verifications,
+        "safety": safety,
     }
 
 
 def cubemx_script(mcu: str, name: str, output_dir: Path, configuration: dict[str, Any] | None = None) -> str:
-    commands = [f"load {mcu}", "waitclock 5"]
+    commands = [f"load {mcu}", "waitclock 5", f"set mode SYS {cube_script_value(SWD_CUBE_MODE)}"]
     if configuration:
         for operation in configuration["operations"]:
             commands.append(f"set mode {operation['instance']} {cube_script_value(operation['mode'])}")
@@ -1875,7 +2155,26 @@ def apply_ioc_overrides(project_dir: Path, overrides: list[dict[str, str]]) -> P
     return ioc_path
 
 
-def run_cubemx_quiet_script(toolchain: Toolchain, output_dir: Path, project_name: str, script_text: str) -> subprocess.CompletedProcess[str]:
+def cleanup_temporary_file(path: Path, delays: tuple[float, ...] = TEMPORARY_CLEANUP_DELAYS_SECONDS) -> str | None:
+    """Delete a temporary file after Windows releases a short-lived process handle."""
+    for delay in (0.0, *delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            path.unlink(missing_ok=True)
+            return None
+        except OSError as error:
+            last_error = error
+    return f"temporary file remains at {path}: {last_error}"
+
+
+def run_cubemx_quiet_script(
+    toolchain: Toolchain,
+    output_dir: Path,
+    project_name: str,
+    script_text: str,
+    timeout_seconds: int = DEFAULT_CUBEMX_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -1887,7 +2186,7 @@ def run_cubemx_quiet_script(toolchain: Toolchain, output_dir: Path, project_name
         script_file.write(script_text)
         script_path = Path(script_file.name)
     try:
-        return subprocess.run(
+        result = subprocess.run(
             [toolchain.cubemx, "-q", str(script_path)],
             cwd=output_dir,
             env=build_environment(toolchain),
@@ -1895,9 +2194,13 @@ def run_cubemx_quiet_script(toolchain: Toolchain, output_dir: Path, project_name
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
+            timeout=timeout_seconds,
         )
     finally:
-        script_path.unlink(missing_ok=True)
+        cleanup_warning = cleanup_temporary_file(script_path)
+        if cleanup_warning:
+            print(f"Cleanup warning: {cleanup_warning}", file=sys.stderr)
+    return result
 
 
 def cubemx_rejected_commands(output: str) -> bool:
@@ -1931,6 +2234,22 @@ def ioc_frequency_property_value(ioc_content: str, key: str) -> int | None:
     return int(values[0])
 
 
+def ioc_property_value(ioc_content: str, key: str) -> str | None:
+    values = re.findall(rf"^{re.escape(key)}=([^\r\n]+)$", ioc_content, re.MULTILINE)
+    return values[0] if len(values) == 1 else None
+
+
+def expected_timer_clock_from_apb(ioc_content: str, timing: dict[str, Any]) -> int | None:
+    bus_hz = ioc_frequency_property_value(ioc_content, timing["bus_clock_property"])
+    divider = ioc_property_value(ioc_content, timing["divider_property"])
+    if bus_hz is None or divider is None:
+        return None
+    divisor_match = re.fullmatch(r"RCC_(?:HCLK|APB[12])_DIV([0-9]+)", divider)
+    if divisor_match is None:
+        return None
+    return bus_hz if int(divisor_match.group(1)) == 1 else bus_hz * 2
+
+
 def timer_timing_verification_failures(project_dir: Path, configuration: dict[str, Any]) -> list[str]:
     timer_operations = [
         (index, operation)
@@ -1944,29 +2263,32 @@ def timer_timing_verification_failures(project_dir: Path, configuration: dict[st
     except ValueError as error:
         return [str(error)]
 
-    hclk_hz = ioc_frequency_property_value(ioc_content, "RCC.AHBFreq_Value")
     failures: list[str] = []
     for operation_index, operation in timer_operations:
         timing = operation["timing"]
-        clock_property = timing["clock_property"]
-        peripheral_hz = ioc_frequency_property_value(ioc_content, clock_property)
+        timer_clock_property = timing["timer_clock_property"]
+        timer_hz = ioc_frequency_property_value(ioc_content, timer_clock_property)
+        derived_timer_hz = expected_timer_clock_from_apb(ioc_content, timing)
         label = f"operations[{operation_index}].timing"
-        if hclk_hz is None:
-            failures.append(f"{label} is missing generated RCC.AHBFreq_Value.")
+        if timer_hz is None:
+            failures.append(f"{label} is missing generated {timer_clock_property}.")
             continue
-        if peripheral_hz is None:
-            failures.append(f"{label} is missing generated {clock_property}.")
-            continue
-        if peripheral_hz != hclk_hz:
+        if derived_timer_hz is None:
             failures.append(
-                f"{label} requires an unprescaled STM32F4 APB clock, but "
-                f"{clock_property}={peripheral_hz} differs from RCC.AHBFreq_Value={hclk_hz}."
+                f"{label} cannot derive the timer clock from {timing['bus_clock_property']} and "
+                f"{timing['divider_property']}."
             )
             continue
-        if timing["timer_input_hz"] != peripheral_hz:
+        if timer_hz != derived_timer_hz:
+            failures.append(
+                f"{label} generated {timer_clock_property}={timer_hz}, but the APB divider rule gives "
+                f"{derived_timer_hz}."
+            )
+            continue
+        if timing["timer_input_hz"] != timer_hz:
             failures.append(
                 f"{label}.timer_input_hz={timing['timer_input_hz']} differs from "
-                f"generated {clock_property}={peripheral_hz}."
+                f"generated {timer_clock_property}={timer_hz}."
             )
             continue
 
@@ -1986,34 +2308,76 @@ def timer_timing_verification_failures(project_dir: Path, configuration: dict[st
 def configuration_verification_failures(project_dir: Path, configuration: dict[str, Any]) -> list[str]:
     ioc_files = sorted(project_dir.glob("*.ioc"))
     failures = generated_pin_verification_failures(project_dir, configuration)
-    verifications = list(configuration["verifications"])
+    verifications: list[tuple[dict[str, str], str | None]] = [
+        (verification, None) for verification in configuration["verifications"]
+    ]
     verifications.extend(
-        parameter["verification"]
+        (
+            parameter["verification"],
+            f"{operation['instance']}.{parameter['name']}={parameter['value']}"
+            if parameter.get("verified_default") == parameter["value"]
+            else None,
+        )
         for operation in configuration["operations"]
         for parameter in operation.get("parameters", [])
         if parameter.get("verification") is not None
     )
-    for verification in verifications:
+    for verification, verified_default_assertion in verifications:
         target = ioc_files[0] if verification["file"] == IOC_VERIFICATION_FILE and ioc_files else project_dir / verification["file"]
         if not target.is_file():
             failures.append(f"missing {verification['file']}")
             continue
         content = target.read_text(encoding="utf-8", errors="replace")
-        if verification["contains"] not in content:
+        if verification["contains"] not in content and not (
+            verification["file"] == IOC_VERIFICATION_FILE
+            and verification["contains"] == verified_default_assertion
+        ):
             failures.append(f"{verification['file']} is missing {verification['contains']!r}")
     failures.extend(timer_timing_verification_failures(project_dir, configuration))
     return failures
 
 
+def debug_configuration_failures(project_dir: Path) -> list[str]:
+    """Require generated firmware to keep Serial Wire available after reset."""
+    try:
+        ioc_content = root_ioc_file(project_dir).read_text(encoding="utf-8", errors="replace")
+    except ValueError as error:
+        return [str(error)]
+    failures: list[str] = []
+    explicit_debug = re.search(rf"^SYS\.Debug={re.escape(SWD_IOC_VALUE)}$", ioc_content, re.MULTILINE)
+    f1_serial_wire_pins = all(
+        re.search(rf"^{re.escape(fact)}$", ioc_content, re.MULTILINE)
+        for fact in (
+            "PA13.Mode=Serial_Wire",
+            "PA13.Signal=SYS_JTMS-SWDIO",
+            "PA14.Mode=Serial_Wire",
+            "PA14.Signal=SYS_JTCK-SWCLK",
+        )
+    )
+    if not explicit_debug and not f1_serial_wire_pins:
+        failures.append("$IOC must record Serial Wire on SYS or the PA13/PA14 SWD pair")
+    for source_path in generated_identifier_source_files(project_dir):
+        source_text = source_path.read_text(encoding="utf-8", errors="replace")
+        if "__HAL_AFIO_REMAP_SWJ_DISABLE" in configuration_bearing_source_text(source_text):
+            failures.append(f"{source_path.relative_to(project_dir).as_posix()} disables Serial Wire with SWJ_DISABLE")
+    return failures
+
+
 def run_generate(args: argparse.Namespace) -> int:
     try:
-        name = validated_project_name(args.name)
+        name = resolved_project_name(args.name, bool(getattr(args, "normalize_name", False)))
         mcu = validated_mcu_identifier(args.mcu)
         if not all((args.board_profile, args.manual, args.plan)):
             raise ValueError("generate requires --board-profile, --manual, and --plan.")
         profile_path = Path(args.board_profile).expanduser().resolve()
         manual_path = Path(args.manual).expanduser().resolve()
-        board_profile, profile_snapshot = load_and_validate_profile_snapshot(profile_path, manual_path)
+        manual_index_value = getattr(args, "manual_index", None)
+        manual_index_path = Path(manual_index_value).expanduser().resolve() if manual_index_value else None
+        board_profile, profile_snapshot = load_and_validate_profile_snapshot(
+            profile_path,
+            manual_path,
+            manual_index_path,
+        )
         board_profile_sha256 = hashlib.sha256(profile_snapshot).hexdigest()
         plan_path = Path(args.plan).expanduser().resolve()
         configuration = config_plan(plan_path, mcu, board_profile)
@@ -2044,12 +2408,32 @@ def run_generate(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        result = run_cubemx_quiet_script(toolchain, output_dir, name, script_text)
+        result = run_cubemx_quiet_script(
+            toolchain,
+            output_dir,
+            name,
+            script_text,
+            getattr(args, "cubemx_timeout", DEFAULT_CUBEMX_TIMEOUT_SECONDS),
+        )
+    except subprocess.TimeoutExpired as error:
+        timeout_log = output_dir / f".{name}.cubemx-timeout.log"
+        if error.stdout:
+            output = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else error.stdout
+            timeout_log.write_text(output, encoding="utf-8")
+        print(
+            f"CubeMX exceeded {error.timeout} seconds. Check for a firmware-license or package dialog, then rerun."
+            + (f" Log: {timeout_log}" if timeout_log.is_file() else ""),
+            file=sys.stderr,
+        )
+        return 1
     except OSError as error:
         print(f"CubeMX generation could not start: {error}", file=sys.stderr)
         return 1
 
+    generation_log = output_dir / f".{name}.cubemx.log"
     if result.stdout:
+        generation_log.write_text(result.stdout, encoding="utf-8")
+    if result.stdout and getattr(args, "verbose", False):
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     if result.returncode != 0:
         print(f"CubeMX generation failed with exit code {result.returncode}.", file=sys.stderr)
@@ -2069,11 +2453,22 @@ def run_generate(args: argparse.Namespace) -> int:
                 output_dir,
                 name,
                 cubemx_config_reload_script(ioc_path),
+                getattr(args, "cubemx_timeout", DEFAULT_CUBEMX_TIMEOUT_SECONDS),
             )
+        except subprocess.TimeoutExpired as error:
+            print(
+                f"CubeMX configuration reload exceeded {error.timeout} seconds. Check for an open CubeMX dialog.",
+                file=sys.stderr,
+            )
+            return 1
         except (OSError, ValueError) as error:
             print(f"CubeMX configuration reload could not start: {error}", file=sys.stderr)
             return 1
         if reload_result.stdout:
+            with generation_log.open("a", encoding="utf-8") as output:
+                output.write("\n--- CubeMX configuration reload ---\n")
+                output.write(reload_result.stdout)
+        if reload_result.stdout and getattr(args, "verbose", False):
             print(reload_result.stdout, end="" if reload_result.stdout.endswith("\n") else "\n")
         if reload_result.returncode != 0:
             print(f"CubeMX configuration reload failed with exit code {reload_result.returncode}.", file=sys.stderr)
@@ -2098,6 +2493,7 @@ def run_generate(args: argparse.Namespace) -> int:
         return 1
     if configuration:
         failures = configuration_verification_failures(project_dir, configuration)
+        failures.extend(debug_configuration_failures(project_dir))
         if failures:
             print("Generated project did not satisfy the approved configuration plan:", file=sys.stderr)
             for failure in failures:
@@ -2115,7 +2511,260 @@ def run_generate(args: argparse.Namespace) -> int:
         print(f"Could not write verified project provenance: {error}", file=sys.stderr)
         return 1
     print(f"Project provenance: {provenance_path}")
+    if generation_log.is_file():
+        logs_dir = project_dir / "codex-logs"
+        logs_dir.mkdir(exist_ok=True)
+        final_log = logs_dir / "cubemx-generate.log"
+        generation_log.replace(final_log)
+        print(f"CubeMX log: {final_log}")
     return 0
+
+
+def write_run_report(
+    project_dir: Path,
+    command: str,
+    stages: list[dict[str, Any]],
+    status: str,
+    report_path: Path | None = None,
+) -> Path:
+    report_path = report_path or project_dir / "codex-run-report.json"
+    payload = {
+        "schema_version": 1,
+        "command": command,
+        "status": status,
+        "total_seconds": round(sum(stage["seconds"] for stage in stages), 3),
+        "stages": stages,
+        "artifacts": [str(path) for path in find_artifacts(project_dir)] if project_dir.is_dir() else [],
+    }
+    report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report_path
+
+
+def run_create(args: argparse.Namespace) -> int:
+    try:
+        name = resolved_project_name(args.name, bool(getattr(args, "normalize_name", False)))
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+    project_dir = Path(args.output_dir).expanduser().resolve() / name
+    stages: list[dict[str, Any]] = []
+
+    started = time.perf_counter()
+    generate_code = run_generate(args)
+    stages.append({"name": "generation", "status": "passed" if generate_code == 0 else "failed", "seconds": round(time.perf_counter() - started, 3)})
+    if generate_code != 0:
+        output_dir = Path(args.output_dir).expanduser().resolve()
+        if output_dir.is_dir():
+            report_path = write_run_report(
+                project_dir,
+                "create",
+                stages,
+                "failed",
+                output_dir / f"{name}.codex-run-report.json",
+            )
+            print(f"Run report: {report_path}")
+        return generate_code
+
+    try:
+        provenance = load_project_provenance(project_dir)
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        write_run_report(project_dir, "create", stages, "failed")
+        return 2
+    for module in provenance["modules"]:
+        started = time.perf_counter()
+        module_args = argparse.Namespace(project_dir=str(project_dir), name=module["name"], pack=module["pack"])
+        code = run_module(module_args)
+        if code == 0:
+            code = run_integrate(argparse.Namespace(project_dir=str(project_dir), name=module["name"]))
+        stages.append(
+            {
+                "name": f"module:{module['name']}",
+                "status": "passed" if code == 0 else "failed",
+                "seconds": round(time.perf_counter() - started, 3),
+            }
+        )
+        if code != 0:
+            write_run_report(project_dir, "create", stages, "failed")
+            return code
+
+    started = time.perf_counter()
+    build_code = run_build(
+        argparse.Namespace(
+            project_dir=str(project_dir),
+            jobs=getattr(args, "jobs", None),
+            cubemx=args.cubemx,
+            cubeide=args.cubeide,
+        )
+    )
+    stages.append({"name": "build", "status": "passed" if build_code == 0 else "failed", "seconds": round(time.perf_counter() - started, 3)})
+    report_path = write_run_report(project_dir, "create", stages, "passed" if build_code == 0 else "failed")
+    print(f"Run report: {report_path}")
+    return build_code
+
+
+def merge_cubemx_user_regions(source_text: str, target_text: str) -> str:
+    source_regions = {match.group("label"): match.group("content") for match in LABELED_USER_CODE_REGION.finditer(source_text)}
+    if not source_regions:
+        return target_text
+    target_labels = [match.group("label") for match in LABELED_USER_CODE_REGION.finditer(target_text)]
+    if len(target_labels) != len(set(target_labels)):
+        raise ValueError("New CubeMX source repeats a USER CODE region label.")
+
+    def replacement(match: re.Match[str]) -> str:
+        label = match.group("label")
+        content = source_regions.get(label, match.group("content"))
+        return f"/* USER CODE BEGIN {label} */{content}/* USER CODE END {label} */"
+
+    return LABELED_USER_CODE_REGION.sub(replacement, target_text)
+
+
+def restore_user_owned_project_content(source_project: Path, target_project: Path) -> None:
+    source_app = source_project / "App"
+    if source_app.is_dir():
+        shutil.copytree(source_app, target_project / "App", dirs_exist_ok=True)
+    for relative_root in GENERATED_IDENTIFIER_DIRECTORIES:
+        source_root = source_project / relative_root
+        target_root = target_project / relative_root
+        if not source_root.is_dir() or not target_root.is_dir():
+            continue
+        for source_path in source_root.rglob("*"):
+            if not source_path.is_file():
+                continue
+            target_path = target_root / source_path.relative_to(source_root)
+            if not target_path.is_file() or source_path.suffix.lower() not in {".c", ".h"}:
+                continue
+            source_text = source_path.read_text(encoding="utf-8", errors="replace")
+            target_text = target_path.read_text(encoding="utf-8", errors="replace")
+            merged = merge_cubemx_user_regions(source_text, target_text)
+            if merged != target_text:
+                target_path.write_text(merged, encoding="utf-8")
+
+
+def materialize_planned_modules(project_dir: Path, modules: list[dict[str, Any]]) -> int:
+    for module in modules:
+        header = project_dir / "App" / "Inc" / f"{module['name']}.h"
+        source = project_dir / "App" / "Src" / f"{module['name']}.c"
+        if header.is_file() and source.is_file():
+            synchronize_module_makefile(project_dir)
+        else:
+            code = run_module(
+                argparse.Namespace(project_dir=str(project_dir), name=module["name"], pack=module["pack"])
+            )
+            if code != 0:
+                return code
+        code = run_integrate(argparse.Namespace(project_dir=str(project_dir), name=module["name"]))
+        if code != 0:
+            return code
+    return 0
+
+
+def revision_diff(source_project: Path, target_project: Path) -> str:
+    tracked_names = {"Makefile", MODULES_MAKEFILE, PROJECT_PROVENANCE_FILE}
+    tracked_suffixes = {".c", ".h", ".ioc", ".ld", ".s", ".json", ".mk"}
+
+    def files(root: Path) -> dict[str, Path]:
+        return {
+            path.relative_to(root).as_posix(): path
+            for path in root.rglob("*")
+            if path.is_file()
+            and (path.name in tracked_names or path.suffix.lower() in tracked_suffixes)
+            and "codex-logs" not in path.parts
+            and path.name != "codex-run-report.json"
+        }
+
+    before = files(source_project)
+    after = files(target_project)
+    chunks: list[str] = []
+    for relative in sorted(set(before) | set(after)):
+        old_lines = before[relative].read_text(encoding="utf-8", errors="replace").splitlines(keepends=True) if relative in before else []
+        new_lines = after[relative].read_text(encoding="utf-8", errors="replace").splitlines(keepends=True) if relative in after else []
+        chunks.extend(
+            difflib.unified_diff(
+                old_lines,
+                new_lines,
+                fromfile=f"before/{relative}",
+                tofile=f"after/{relative}",
+            )
+        )
+    return "".join(chunks)
+
+
+def run_revise(args: argparse.Namespace) -> int:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    try:
+        current = load_project_provenance(project_dir)
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+    if args.apply and not args.backup_dir:
+        print("Error: revise --apply requires an explicit new --backup-dir.", file=sys.stderr)
+        return 2
+
+    with tempfile.TemporaryDirectory(prefix=f".{project_dir.name}-revision-", dir=project_dir.parent) as temporary_directory:
+        revision_root = Path(temporary_directory)
+        generate_args = argparse.Namespace(
+            mcu=current["mcu"],
+            name=project_dir.name,
+            output_dir=str(revision_root),
+            board_profile=args.board_profile,
+            manual=args.manual,
+            manual_index=args.manual_index,
+            plan=args.plan,
+            cubemx=args.cubemx,
+            cubeide=args.cubeide,
+            dry_run=False,
+            normalize_name=False,
+            verbose=args.verbose,
+            cubemx_timeout=args.cubemx_timeout,
+        )
+        code = run_generate(generate_args)
+        if code != 0:
+            return code
+        revised_project = revision_root / project_dir.name
+        restore_user_owned_project_content(project_dir, revised_project)
+        try:
+            revised = load_project_provenance(revised_project)
+        except (OSError, ValueError) as error:
+            print(f"Error: {error}", file=sys.stderr)
+            return 2
+        code = materialize_planned_modules(revised_project, revised["modules"])
+        if code == 0:
+            code = run_build(
+                argparse.Namespace(
+                    project_dir=str(revised_project),
+                    jobs=args.jobs,
+                    cubemx=args.cubemx,
+                    cubeide=args.cubeide,
+                )
+            )
+        if code != 0:
+            return code
+
+        diff_text = revision_diff(project_dir, revised_project)
+        diff_path = Path(args.diff_output).expanduser().resolve() if args.diff_output else project_dir.parent / f"{project_dir.name}.revision.diff"
+        diff_path.write_text(diff_text or "No source or configuration changes.\n", encoding="utf-8")
+        print(f"Revision diff: {diff_path}")
+        if not args.apply:
+            print("Revision verified; rerun with --apply and a new --backup-dir to replace the project.")
+            return 0
+
+        backup_dir = Path(args.backup_dir).expanduser().resolve()
+        if backup_dir.exists():
+            print(f"Error: backup directory already exists: {backup_dir}", file=sys.stderr)
+            return 2
+        if backup_dir.parent != project_dir.parent:
+            print("Error: backup directory must be a sibling of the project for an atomic revision.", file=sys.stderr)
+            return 2
+        project_dir.replace(backup_dir)
+        try:
+            revised_project.replace(project_dir)
+        except OSError:
+            backup_dir.replace(project_dir)
+            raise
+        print(f"Revision applied: {project_dir}")
+        print(f"Previous project: {backup_dir}")
+        return 0
 
 
 def module_header_text(name: str) -> str:
@@ -2179,12 +2828,12 @@ def template_tokens(template_text: str, template_path: Path) -> set[str]:
     return tokens
 
 
-def render_module_template(template_text: str, template_path: Path, bindings: dict[str, str]) -> str:
+def render_module_template(template_text: str, template_path: Path, bindings: dict[str, Any]) -> str:
     tokens = template_tokens(template_text, template_path)
     missing = sorted(tokens - bindings.keys())
     if missing:
         raise ValueError(f"Template {template_path.name} is missing bindings for: {', '.join(missing)}")
-    rendered = TEMPLATE_TOKEN.sub(lambda match: bindings[match.group(1)], template_text)
+    rendered = TEMPLATE_TOKEN.sub(lambda match: str(bindings[match.group(1)]), template_text)
     if "{{" in rendered or "}}" in rendered:
         raise ValueError(f"Template rendering left an unresolved placeholder: {template_path}")
     return rendered
@@ -2397,6 +3046,73 @@ def synchronize_main_user_block(text: str, label: str, name: str, block: str, st
     return text[:begin] + region + text[end:]
 
 
+def matching_c_brace(text: str, opening_brace: int) -> int:
+    masked = C_NONCODE.sub(lambda match: " " * len(match.group(0)), text)
+    if opening_brace >= len(masked) or masked[opening_brace] != "{":
+        raise ValueError("Expected a C opening brace at the requested position.")
+    depth = 0
+    for position in range(opening_brace, len(masked)):
+        if masked[position] == "{":
+            depth += 1
+        elif masked[position] == "}":
+            depth -= 1
+            if depth == 0:
+                return position
+    raise ValueError("CubeMX main.c contains an unbalanced while-loop brace.")
+
+
+def main_while_one_bounds(text: str, process_region_begin: int) -> tuple[int, int]:
+    masked = C_NONCODE.sub(lambda match: " " * len(match.group(0)), text)
+    candidates: list[tuple[int, int]] = []
+    for match in re.finditer(r"\bwhile\s*\(\s*1\s*\)\s*\{", masked):
+        opening = masked.rfind("{", match.start(), match.end())
+        closing = matching_c_brace(text, opening)
+        if opening < process_region_begin < closing:
+            candidates.append((opening, closing))
+    if len(candidates) != 1:
+        raise ValueError("Expected USER CODE 3 to belong to exactly one while (1) loop in main.c.")
+    return candidates[0]
+
+
+def synchronize_main_process_block(text: str, name: str, statement: str, newline: str) -> str:
+    begin, end = user_code_region(text, "3")
+    marker_begin = main_module_marker(name, USER_CODE_BLOCKS["3"], ">>>")
+    marker_end = main_module_marker(name, USER_CODE_BLOCKS["3"], "<<<")
+    region = text[begin:end]
+    begin_count = region.count(marker_begin)
+    end_count = region.count(marker_end)
+    if begin_count != end_count or begin_count > 1:
+        raise ValueError(f"Codex integration markers for module {name} in USER CODE 3 are incomplete.")
+    if begin_count:
+        managed_begin = region.index(marker_begin)
+        managed_end = region.index(marker_end, managed_begin) + len(marker_end)
+        line_start = region.rfind("\n", 0, managed_begin) + 1
+        if not region[line_start:managed_begin].strip():
+            managed_begin = line_start
+        if region.startswith("\r\n", managed_end):
+            managed_end += 2
+        elif region.startswith("\n", managed_end):
+            managed_end += 1
+        region = region[:managed_begin] + region[managed_end:]
+        text = text[:begin] + region + text[end:]
+        begin, end = user_code_region(text, "3")
+    elif statement in text:
+        raise ValueError(f"main.c already contains {statement!r} outside Codex's managed marker; refusing to duplicate it.")
+
+    _, while_closing = main_while_one_bounds(text, begin)
+    insertion = while_closing if while_closing < end else end
+    managed = main_module_block(name, USER_CODE_BLOCKS["3"], statement, newline) + newline
+    if insertion > 0 and text[insertion - 1] not in "\r\n":
+        managed = newline + managed
+    updated = text[:insertion] + managed + text[insertion:]
+    updated_begin, _ = user_code_region(updated, "3")
+    _, updated_closing = main_while_one_bounds(updated, updated_begin)
+    statement_position = updated.index(statement)
+    if not updated_begin < statement_position < updated_closing:
+        raise ValueError(f"Integrated process call for {name} is outside main's while (1) loop.")
+    return updated
+
+
 def synchronize_main_module(project_dir: Path, name: str) -> None:
     main_path = project_dir / "Src" / "main.c"
     if not main_path.is_file():
@@ -2419,14 +3135,7 @@ def synchronize_main_module(project_dir: Path, name: str) -> None:
         f"{name}_init();",
         newline,
     )
-    updated = synchronize_main_user_block(
-        updated,
-        "3",
-        name,
-        USER_CODE_BLOCKS["3"],
-        f"{name}_process();",
-        newline,
-    )
+    updated = synchronize_main_process_block(updated, name, f"{name}_process();", newline)
     if updated != original:
         main_path.write_text(updated, encoding="utf-8")
 
@@ -2453,6 +3162,180 @@ def find_artifacts(project_dir: Path) -> list[Path]:
     extensions = {".elf", ".bin", ".hex", ".map"}
     artifacts = [path for path in project_dir.rglob("*") if path.is_file() and path.suffix.lower() in extensions]
     return sorted(artifacts, key=lambda path: (path.suffix, str(path)))
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def positive_integer(value: str) -> int:
+    try:
+        parsed = int(value, 0)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("use a positive decimal or 0x-prefixed integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def normalized_device_id(value: str) -> str:
+    if not re.fullmatch(r"0x[0-9A-Fa-f]+", value):
+        raise ValueError("--expected-device-id must be a 0x-prefixed hexadecimal value.")
+    return f"0x{int(value, 16):X}"
+
+
+def programmer_target(output: str) -> tuple[str, float]:
+    device_match = TARGET_DEVICE_ID.search(output)
+    voltage_match = TARGET_VOLTAGE.search(output)
+    if not device_match or not voltage_match:
+        raise ValueError("CubeProgrammer did not report both Device ID and target Voltage.")
+    return normalized_device_id(device_match.group(1)), float(voltage_match.group(1))
+
+
+def run_programmer(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+def flash_report_path(backup_dir: Path, payload: dict[str, Any], log_chunks: list[str]) -> Path:
+    report_path = backup_dir / "flash-report.json"
+    report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (backup_dir / "flash.log").write_text("\n".join(log_chunks), encoding="utf-8")
+    return report_path
+
+
+def run_flash(args: argparse.Namespace) -> int:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    artifact = Path(args.artifact).expanduser().resolve()
+    try:
+        load_project_provenance(project_dir)
+        artifact.relative_to(project_dir)
+        if not artifact.is_file() or artifact.suffix.lower() != ".hex":
+            raise ValueError("--artifact must be an existing .hex file inside the verified project.")
+        expected_device_id = normalized_device_id(args.expected_device_id)
+        artifact_sha256 = file_sha256(artifact)
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+
+    if args.authorize_sha256 != artifact_sha256:
+        print("Flash authorization required; no target command was run.")
+        print(f"Artifact: {artifact}")
+        print(f"SHA-256: {artifact_sha256}")
+        print(f"Rerun with --authorize-sha256 {artifact_sha256}")
+        return 2
+
+    backup_dir = Path(args.backup_dir).expanduser().resolve()
+    if backup_dir.exists():
+        print(f"Error: backup directory already exists: {backup_dir}", file=sys.stderr)
+        return 2
+    try:
+        programmer = discover_cubeprogrammer(args.cubeprogrammer, args.cubeide)
+    except RuntimeError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+    if not programmer:
+        print("Error: STM32CubeProgrammer CLI is required for flashing.", file=sys.stderr)
+        return 2
+
+    connection = ["-c", "port=SWD", f"freq={args.frequency_khz}", f"mode={args.mode}"]
+    connect_command = [programmer, *connection]
+    connect_result = run_programmer(connect_command)
+    if connect_result.returncode != 0:
+        print("Target connection failed; flash was not started.", file=sys.stderr)
+        if connect_result.stdout:
+            print(connect_result.stdout, file=sys.stderr)
+        return 1
+    try:
+        actual_device_id, voltage = programmer_target(connect_result.stdout or "")
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    if actual_device_id != expected_device_id:
+        print(
+            f"Error: connected target is {actual_device_id}; expected {expected_device_id}. Flash was not started.",
+            file=sys.stderr,
+        )
+        return 1
+    if voltage < args.min_voltage:
+        print(
+            f"Error: target voltage {voltage:.2f} V is below required {args.min_voltage:.2f} V. Flash was not started.",
+            file=sys.stderr,
+        )
+        return 1
+
+    backup_dir.mkdir(parents=True)
+    backup_path = backup_dir / "flash-before.bin"
+    log_chunks = ["CONNECT", connect_result.stdout or ""]
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "status": "failed",
+        "artifact": {"path": str(artifact), "sha256": artifact_sha256},
+        "target": {
+            "expected_device_id": expected_device_id,
+            "actual_device_id": actual_device_id,
+            "voltage_v": voltage,
+            "minimum_voltage_v": args.min_voltage,
+            "mode": args.mode,
+            "frequency_khz": args.frequency_khz,
+        },
+        "backup": {"path": str(backup_path), "size": args.backup_size, "status": "failed"},
+        "write_verify": "not_started",
+        "reset": "not_started",
+    }
+
+    backup_command = [
+        programmer,
+        *connection,
+        "-u",
+        FLASH_BASE_ADDRESS,
+        str(args.backup_size),
+        str(backup_path),
+    ]
+    backup_result = run_programmer(backup_command)
+    log_chunks.extend(["BACKUP", backup_result.stdout or ""])
+    if backup_result.returncode != 0 or not backup_path.is_file():
+        report_path = flash_report_path(backup_dir, payload, log_chunks)
+        print(f"Backup failed; flash was not started. Report: {report_path}", file=sys.stderr)
+        return 1
+    payload["backup"] = {
+        "path": str(backup_path),
+        "size": backup_path.stat().st_size,
+        "sha256": file_sha256(backup_path),
+        "status": "passed",
+    }
+
+    download_command = [programmer, *connection, "-d", str(artifact), "-v"]
+    download_result = run_programmer(download_command)
+    log_chunks.extend(["WRITE_AND_VERIFY", download_result.stdout or ""])
+    payload["write_verify"] = "passed" if download_result.returncode == 0 else "failed"
+    if download_result.returncode != 0:
+        report_path = flash_report_path(backup_dir, payload, log_chunks)
+        print(f"Write or verification failed. Report: {report_path}", file=sys.stderr)
+        return 1
+
+    reset_command = [programmer, *connection, "-rst"]
+    reset_result = run_programmer(reset_command)
+    log_chunks.extend(["RESET", reset_result.stdout or ""])
+    payload["reset"] = "passed" if reset_result.returncode == 0 else "failed"
+    payload["status"] = "passed" if reset_result.returncode == 0 else "failed"
+    report_path = flash_report_path(backup_dir, payload, log_chunks)
+    if reset_result.returncode != 0:
+        print(f"Firmware was written and verified, but reset failed. Report: {report_path}", file=sys.stderr)
+        return 1
+    print(f"Flash passed: target {actual_device_id}, {voltage:.2f} V")
+    print(f"Pre-flash backup: {backup_path}")
+    print(f"Flash report: {report_path}")
+    return 0
 
 
 def run_build(args: argparse.Namespace) -> int:
@@ -2508,6 +3391,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument("--cubemx", help="Override the discovered STM32CubeMX executable path.")
     root.add_argument("--cubeide", help="Override the discovered STM32CubeIDE executable path.")
+    root.add_argument("--cubeprogrammer", help="Override the discovered STM32CubeProgrammer CLI path.")
     commands = root.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="Inspect STM32CubeMX and CubeIDE build-tool availability.")
@@ -2522,8 +3406,39 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("--output-dir", required=True, help="Existing parent directory for the new project.")
     generate.add_argument("--board-profile", required=True, help="Evidence-backed board-profile.json for this manual-driven project.")
     generate.add_argument("--manual", required=True, help="Exact user-provided manual PDF cited by --board-profile.")
+    generate.add_argument("--manual-index", help="Private *.manual-index.json for fast cited-page validation.")
     generate.add_argument("--plan", required=True, help="Approved configuration-plan.json for this new project.")
     generate.add_argument("--dry-run", action="store_true", help="Print the CubeMX script.")
+    generate.add_argument("--normalize-name", action="store_true", help="Use the displayed stable name suggestion.")
+    generate.add_argument("--verbose", action="store_true", help="Stream the full CubeMX log in addition to saving it.")
+    generate.add_argument("--cubemx-timeout", type=positive_integer, default=DEFAULT_CUBEMX_TIMEOUT_SECONDS, help="Maximum CubeMX seconds; default 180.")
+
+    create = commands.add_parser("create", help="Generate, render planned modules, integrate, and compile in one run.")
+    create.add_argument("--mcu", required=True, help="Exact concrete MCU identifier, for example STM32F103ZETx.")
+    create.add_argument("--name", required=True, help="New project display name.")
+    create.add_argument("--output-dir", required=True, help="Existing parent directory for the new project.")
+    create.add_argument("--board-profile", required=True, help="Evidence-backed board-profile.json.")
+    create.add_argument("--manual", required=True, help="Exact user-provided manual PDF cited by the board profile.")
+    create.add_argument("--manual-index", help="Private *.manual-index.json for fast cited-page validation.")
+    create.add_argument("--plan", required=True, help="Approved configuration-plan.json.")
+    create.add_argument("--normalize-name", action="store_true", help="Use the displayed stable name suggestion.")
+    create.add_argument("--verbose", action="store_true", help="Stream the full CubeMX log in addition to saving it.")
+    create.add_argument("--jobs", type=int, help="Parallel Make jobs; defaults to up to 8 logical CPUs.")
+    create.add_argument("--cubemx-timeout", type=positive_integer, default=DEFAULT_CUBEMX_TIMEOUT_SECONDS, help="Maximum CubeMX seconds; default 180.")
+    create.set_defaults(dry_run=False)
+
+    revise = commands.add_parser("revise", help="Preview or atomically apply a verified configuration revision.")
+    revise.add_argument("--project-dir", required=True, help="Existing verified project directory.")
+    revise.add_argument("--board-profile", required=True, help="Evidence-backed board-profile.json for the revision.")
+    revise.add_argument("--manual", required=True, help="Exact manual PDF cited by the board profile.")
+    revise.add_argument("--manual-index", help="Private *.manual-index.json for fast cited-page validation.")
+    revise.add_argument("--plan", required=True, help="New approved configuration-plan.json.")
+    revise.add_argument("--diff-output", help="Revision diff output; defaults beside the project.")
+    revise.add_argument("--apply", action="store_true", help="Apply the verified revision after preview and build.")
+    revise.add_argument("--backup-dir", help="New sibling directory that receives the complete previous project.")
+    revise.add_argument("--verbose", action="store_true", help="Stream the full CubeMX log in addition to saving it.")
+    revise.add_argument("--jobs", type=int, help="Parallel Make jobs; defaults to up to 8 logical CPUs.")
+    revise.add_argument("--cubemx-timeout", type=positive_integer, default=DEFAULT_CUBEMX_TIMEOUT_SECONDS, help="Maximum CubeMX seconds; default 180.")
 
     module = commands.add_parser("module", help="Create an App module and synchronize its Makefile integration.")
     module.add_argument("--project-dir", required=True, help="CubeMX-generated Makefile project directory.")
@@ -2537,6 +3452,17 @@ def parser() -> argparse.ArgumentParser:
     build = commands.add_parser("build", help="Compile a CubeMX-generated Makefile project with CubeIDE tools.")
     build.add_argument("--project-dir", required=True, help="Project directory containing Makefile.")
     build.add_argument("--jobs", type=int, help="Parallel Make jobs; defaults to up to 8 logical CPUs.")
+
+    flash = commands.add_parser("flash", help="Back up, write, verify, and reset one explicitly authorized target.")
+    flash.add_argument("--project-dir", required=True, help="Verified project directory containing the artifact.")
+    flash.add_argument("--artifact", required=True, help="Built .hex artifact inside the verified project.")
+    flash.add_argument("--expected-device-id", required=True, help="Expected CubeProgrammer device ID, such as 0x413.")
+    flash.add_argument("--backup-size", required=True, type=positive_integer, help="Flash bytes to back up from 0x08000000.")
+    flash.add_argument("--backup-dir", required=True, help="New directory for the pre-flash backup, log, and report.")
+    flash.add_argument("--authorize-sha256", help="Exact artifact SHA-256 printed by the first, non-writing invocation.")
+    flash.add_argument("--min-voltage", type=float, default=2.7, help="Minimum accepted target voltage; default 2.7 V.")
+    flash.add_argument("--frequency-khz", type=positive_integer, default=4000, help="SWD clock in kHz; default 4000.")
+    flash.add_argument("--mode", choices=("NORMAL", "HOTPLUG", "UR"), default="NORMAL", help="SWD connection mode.")
     return root
 
 
@@ -2550,8 +3476,14 @@ def main() -> int:
             return 2
     if args.command == "generate":
         return run_generate(args)
+    if args.command == "create":
+        return run_create(args)
+    if args.command == "revise":
+        return run_revise(args)
     if args.command == "build":
         return run_build(args)
+    if args.command == "flash":
+        return run_flash(args)
     if args.command == "module":
         return run_module(args)
     if args.command == "integrate":
