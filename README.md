@@ -1,12 +1,25 @@
 # STM32 Manual-Driven Codex Skill
 
-Turn a board manual and a plain-language STM32 request into a new CubeMX
-Makefile project, an App module, and compiled firmware artifacts.
+Turn an STM32 board manual and a natural-language request into a verified
+CubeMX project, reusable App modules, and compiled firmware artifacts.
 
-`stm32-cubemx-build` is a Codex Skill for GPIO input/output, UART, I2C, SPI,
-PWM, timers, servos, and application-module work. CubeMX generates the project; CubeIDE
-provides the Arm compiler and Make tools. The normal workflow runs from the
-command line on macOS or Windows.
+`stm32-cubemx-build` is a Codex Skill for GPIO, UART, I2C, SPI, PWM, timers,
+servos, and application modules. It grounds configuration in page-cited board
+facts, generates a fresh CubeMX Makefile project, integrates App `.c/.h` files
+into `main.c`, and builds with CubeIDE's Arm toolchain on macOS or Windows.
+VS Code is optional.
+
+Board packages, capability packs, templates, and tests form an open extension
+layer so contributors can add hardware support and reusable functions without
+changing the core workflow.
+
+## Architecture and workflow
+
+<p align="center">
+  <a href="docs/assets/stm32-skill-architecture-workflow.png">
+    <img src="docs/assets/stm32-skill-architecture-workflow.png" width="100%" alt="STM32 Manual-Driven Skill architecture from board manual and natural-language request through verified firmware delivery and the open-source extension ecosystem">
+  </a>
+</p>
 
 ## What the Skill produces
 
