@@ -32,6 +32,23 @@ command line on macOS or Windows.
 | `servo` | 50 Hz hobby-servo output | Set pulse width or 0–180 degree angle |
 | `timer` | Periodic timer dispatch | Consume timer ticks from the main loop |
 
+## Community board catalog
+
+The installable Skill includes a validated catalog under
+`stm32-cubemx-build/boards/`. Contributors can add one page-cited board package
+through a pull request so later users can reuse its MCU, clock, connector, pin,
+and electrical facts.
+
+```bash
+python stm32-cubemx-build/scripts/list_boards.py
+python stm32-cubemx-build/scripts/validate_boards.py
+```
+
+Each package links to an official manual and records its SHA-256; vendor PDFs
+and extracted full-text indexes stay outside the repository. A user still
+supplies the exact manual locally before the profile can drive generation.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the package layout and review rules.
+
 ## See it work: a real I2C run
 
 This example records a local CubeMX generation-and-compilation run on macOS
@@ -87,8 +104,9 @@ The local build verified project provenance first, then produced `.elf`,
 ## Workflow
 
 1. Upload the board manual and describe the firmware task.
-2. Build a board profile from page-cited manual facts. Each fact records a
-   concise anchor from the cited page.
+2. Reuse a matching validated community board package or build a board profile
+   from page-cited manual facts. Each fact records a concise anchor from the
+   cited page.
 3. Select the required packs and create a configuration plan from the board
    profile and the installed CubeMX MCU database.
 4. Generate the new project and verify the requested pins, parameters, and
@@ -190,8 +208,9 @@ The Skill reports results at the level it has completed:
 
 ## Validation in this release
 
-- 92 deterministic tests cover profile validation, configuration planning,
-  generation provenance, pack rendering, integration, and build preparation.
+- 100 deterministic tests cover profile validation, community board packages,
+  configuration planning, generation provenance, pack rendering, integration,
+  and build preparation.
 - All eight built-in pack contracts validate.
 - The current source completed an I2C flow with CubeMX generation, App module
   integration, and compilation to `.elf`, `.bin`, and `.hex` artifacts.
@@ -206,13 +225,15 @@ From the repository root:
 ```bash
 python -m unittest discover -s tests -v
 python stm32-cubemx-build/scripts/validate_packs.py
+python stm32-cubemx-build/scripts/validate_boards.py
 python stm32-cubemx-build/scripts/stm32_cube.py doctor --strict
 ```
 
-GitHub Actions runs the deterministic tests, pack validation, and Python
-compile check on Linux, macOS, and Windows. The Windows runner also executes
-the complete PowerShell smoke orchestration from environment check through
-artifact production with deterministic tool fixtures.
+GitHub Actions runs the deterministic tests, capability-pack validation,
+community-board validation, and Python compile check on Linux, macOS, and
+Windows. The Windows runner also executes the complete PowerShell smoke
+orchestration from environment check through artifact production with
+deterministic tool fixtures.
 
 The complete operating workflow is in
 [`stm32-cubemx-build/SKILL.md`](stm32-cubemx-build/SKILL.md). The detailed data

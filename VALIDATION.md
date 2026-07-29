@@ -8,12 +8,15 @@ compilation, revision preview/apply, and explicitly authorized flashing.
 
 ## Automated checks
 
-- **92 deterministic tests** exercise profile facts, manual indexing,
-  configuration-plan rules, pack contracts, generated-project provenance,
-  module rendering, integration, build preparation, revision, and flash
-  authorization.
+- **100 deterministic tests** exercise profile facts, manual indexing,
+  community board packages, configuration-plan rules, pack contracts,
+  generated-project provenance, module rendering, integration, build
+  preparation, revision, and flash authorization.
 - **8 pack contracts** validate: `gpio`, `gpio_input`, `i2c`, `pwm`, `servo`,
   `spi`, `timer`, and `uart`.
+- **Community board validation** checks package identity, official source
+  metadata, manual hashes, cited board profiles, example MCU bindings, and
+  declared result levels before merge.
 - **GitHub Actions** runs the deterministic suite, pack validation, and Python
   compile checks on Linux, macOS, and Windows.
 - **Windows smoke orchestration** executes `doctor` and the one-shot `create`

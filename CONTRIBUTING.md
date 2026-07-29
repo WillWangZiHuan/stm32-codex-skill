@@ -64,6 +64,35 @@ the generated CubeMX source.
 Declare each pack-backed module and its bindings in `configuration-plan.json`
 before generation.
 
+## Board-package layout
+
+Each reusable board package contains:
+
+```text
+boards/<board-id>/
+├── manifest.json
+├── board-profile.json
+└── examples/
+    └── optional.configuration-plan.json
+```
+
+- Use a globally unique lowercase hyphen-case ID such as
+  `st-nucleo-f401re`.
+- Link `manifest.json` to the official HTTPS manual and record the exact PDF
+  SHA-256. Do not commit vendor manuals or extracted full-text indexes unless
+  their license explicitly permits redistribution.
+- Match the manifest board name, MCU, and manual hash to
+  `board-profile.json`.
+- Record every contributed MCU, clock, pin, connector, board revision,
+  electrical constraint, and conflict with a page citation and concise
+  anchor.
+- Set the result level to `profile`, `configuration`, `compile`, or
+  `hardware` according to the evidence included in the pull request.
+
+Read
+[`stm32-cubemx-build/references/board-package-contract.md`](stm32-cubemx-build/references/board-package-contract.md)
+for the complete machine-checked contract.
+
 ## Project conventions
 
 - Board profiles store shareable page citations and short anchors. Keep user
@@ -84,6 +113,7 @@ Run before opening a pull request:
 ```bash
 python -m unittest discover -s tests -v
 python stm32-cubemx-build/scripts/validate_packs.py
+python stm32-cubemx-build/scripts/validate_boards.py
 ```
 
 For executable behavior, add a deterministic test under `tests/`. For a real

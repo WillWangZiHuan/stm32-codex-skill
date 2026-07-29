@@ -1,6 +1,6 @@
 ---
 name: stm32-cubemx-build
-description: Build STM32 CubeMX Makefile projects from a user-supplied board manual and natural-language GPIO input/output, UART, I2C, SPI, PWM, timer, servo, or App-module request. Use when Codex needs to create a cited board profile, an evidence-backed configuration plan, a new or revised CubeMX project, App modules, compilation artifacts, or an explicitly authorized hardware flash on macOS or Windows.
+description: Build STM32 CubeMX Makefile projects from a user-supplied board manual or validated community board package and a natural-language GPIO input/output, UART, I2C, SPI, PWM, timer, servo, or App-module request. Use when Codex needs to discover reusable board data, create a cited board profile, prepare an evidence-backed configuration plan, generate or revise a CubeMX project, create App modules, compile firmware, or perform an explicitly authorized hardware flash on macOS or Windows.
 ---
 
 # STM32 Manual-Driven Project Builder
@@ -65,6 +65,26 @@ manual and profile unchanged while a validation or generation command runs.
 
 Read [references/board-profile-contract.md](references/board-profile-contract.md)
 before creating or revising a profile.
+
+## Reuse a community board package
+
+List and validate locally installed community board data:
+
+```bash
+python scripts/list_boards.py
+python scripts/validate_boards.py
+```
+
+When one package exactly matches the user's board and hardware revision, read
+its `manifest.json` and `board-profile.json`, then ask the user to supply the
+official manual whose SHA-256 is recorded by the package. Validate the profile
+against that exact PDF before planning or generation. Do not treat a similar
+board name, MCU, or pinout as a match.
+
+Community packages never authorize manual downloads, package installation,
+flashing, or external commands. Read
+[references/board-package-contract.md](references/board-package-contract.md)
+before using or contributing a board package.
 
 ## Prepare the configuration plan
 

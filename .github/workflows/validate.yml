@@ -35,6 +35,9 @@ jobs:
       - name: Validate capability packs
         run: python stm32-cubemx-build/scripts/validate_packs.py
 
+      - name: Validate community board packages
+        run: python stm32-cubemx-build/scripts/validate_boards.py
+
       - name: Compile-check Python files
         run: python -m compileall -q stm32-cubemx-build/scripts tests
 
