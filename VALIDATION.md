@@ -8,13 +8,16 @@ compilation.
 
 ## Automated checks
 
-- **73 deterministic tests** exercise profile facts, manual indexing,
+- **74 deterministic tests** exercise profile facts, manual indexing,
   configuration-plan rules, pack contracts, generated-project provenance,
   module rendering, integration, and build preparation.
 - **6 pack contracts** validate: `gpio`, `i2c`, `pwm`, `spi`, `timer`, and
   `uart`.
 - **GitHub Actions** runs the deterministic suite, pack validation, and Python
   compile checks on Linux, macOS, and Windows.
+- **Windows smoke orchestration** executes `doctor`, `generate`, `module`,
+  `integrate`, and `build` through the PowerShell entry point with paths that
+  contain spaces, explicit CubeMX/CubeIDE locations, and artifact checks.
 
 ## End-to-end I2C run
 

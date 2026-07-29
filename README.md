@@ -173,7 +173,7 @@ The Skill reports results at the level it has completed:
 
 ## Validation in this release
 
-- 73 deterministic tests cover profile validation, configuration planning,
+- 74 deterministic tests cover profile validation, configuration planning,
   generation provenance, pack rendering, integration, and build preparation.
 - All six built-in pack contracts validate.
 - The current source completed an I2C flow with CubeMX generation, App module
@@ -193,7 +193,9 @@ python stm32-cubemx-build/scripts/stm32_cube.py doctor --strict
 ```
 
 GitHub Actions runs the deterministic tests, pack validation, and Python
-compile check on Linux, macOS, and Windows.
+compile check on Linux, macOS, and Windows. The Windows runner also executes
+the complete PowerShell smoke orchestration from environment check through
+artifact production with deterministic tool fixtures.
 
 The complete operating workflow is in
 [`stm32-cubemx-build/SKILL.md`](stm32-cubemx-build/SKILL.md). The detailed data

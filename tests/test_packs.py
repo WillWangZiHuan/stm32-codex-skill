@@ -34,8 +34,9 @@ class PackTests(unittest.TestCase):
     def test_validation_record_describes_current_evidence(self) -> None:
         validation_record = (Path(__file__).resolve().parents[1] / "VALIDATION.md").read_text(encoding="utf-8")
         for required_fragment in (
-            "73 deterministic tests",
+            "74 deterministic tests",
             "6 pack contracts",
+            "Windows smoke orchestration",
             "End-to-end I2C run",
             "Configuration verified",
             "Compile verified",

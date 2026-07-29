@@ -35,8 +35,8 @@ jobs:
       - name: Validate capability packs
         run: python stm32-cubemx-build/scripts/validate_packs.py
 
-      - name: Compile-check helper scripts
-        run: python -m compileall -q stm32-cubemx-build/scripts
+      - name: Compile-check Python files
+        run: python -m compileall -q stm32-cubemx-build/scripts tests
 
       - name: Parse Windows smoke harness
         if: runner.os == 'Windows'
@@ -54,3 +54,51 @@ jobs:
             $parseErrors | ForEach-Object { Write-Error $_ }
             exit 1
           }
+
+      - name: Run Windows smoke orchestration contract
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $contractRoot = Join-Path $env:RUNNER_TEMP "stm32 smoke contract"
+          $manual = Join-Path $contractRoot "board manual.pdf"
+          $profile = Join-Path $contractRoot "board-profile.json"
+          $plan = Join-Path $contractRoot "configuration-plan.json"
+          $fakeCubeMX = Join-Path $contractRoot "STM32CubeMX.exe"
+          $fakeCubeIDE = Join-Path $contractRoot "stm32cubeide.exe"
+          $outputDir = Join-Path $contractRoot "output with spaces"
+          $state = Join-Path $contractRoot "contract-state.json"
+          New-Item -ItemType Directory -Path $contractRoot -Force | Out-Null
+          Set-Content -LiteralPath $manual -Value "contract manual"
+          Set-Content -LiteralPath $profile -Value "{}"
+          Set-Content -LiteralPath $plan -Value "{}"
+          Set-Content -LiteralPath $fakeCubeMX -Value "contract CubeMX"
+          Set-Content -LiteralPath $fakeCubeIDE -Value "contract CubeIDE"
+
+          $env:STM32_SMOKE_CONTRACT_STATE = $state
+          $env:STM32_SMOKE_EXPECTED_CUBEMX = $fakeCubeMX
+          $env:STM32_SMOKE_EXPECTED_CUBEIDE = $fakeCubeIDE
+          $smoke = (Resolve-Path "stm32-cubemx-build/scripts/windows_smoke.ps1").Path
+          $fakePython = (Resolve-Path "tests/windows_fake_python.cmd").Path
+          & pwsh -NoProfile -File $smoke `
+            -Manual $manual `
+            -BoardProfile $profile `
+            -Plan $plan `
+            -Mcu "STM32F401RETx" `
+            -OutputDir $outputDir `
+            -ProjectName "windows_contract" `
+            -ModuleName "status_output" `
+            -Pack "gpio" `
+            -CubeMX $fakeCubeMX `
+            -CubeIDE $fakeCubeIDE `
+            -Python $fakePython `
+            -Jobs 3
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $projectDir = Join-Path $outputDir "windows_contract"
+          python tests/windows_smoke_contract.py verify `
+            --state $state `
+            --project $projectDir `
+            --module "status_output"
