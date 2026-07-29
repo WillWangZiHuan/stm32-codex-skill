@@ -251,11 +251,17 @@ class CubeScriptTests(unittest.TestCase):
         self.assertIn("Set STM32CubeMX override to an existing executable path", stderr.getvalue())
 
     def test_script_places_project_under_output_directory(self) -> None:
-        script = stm32_cube.cubemx_script("STM32F401RETx", "demo", Path("/tmp/output"))
+        output_directory = Path(tempfile.gettempdir()) / "stm32-output"
+        script = stm32_cube.cubemx_script("STM32F401RETx", "demo", output_directory)
         self.assertIn('project name demo', script)
-        self.assertIn('project path "/tmp/output"', script)
+        self.assertIn(f"project path {stm32_cube.cube_quote(output_directory)}", script)
         self.assertIn('project toolchain "Makefile"', script)
-        self.assertNotIn('project path "/tmp/output/demo"', script)
+        self.assertNotIn(f"project path {stm32_cube.cube_quote(output_directory / 'demo')}", script)
+
+    def test_script_preserves_a_quoted_windows_output_path(self) -> None:
+        output_directory = Path(r"C:\STM32 Projects\generated")
+        script = stm32_cube.cubemx_script("STM32F401RETx", "demo", output_directory)
+        self.assertIn(r'project path "C:\STM32 Projects\generated"', script)
 
     def test_generate_requires_the_manual_profile_plan_chain(self) -> None:
         arguments = stm32_cube.argparse.Namespace(

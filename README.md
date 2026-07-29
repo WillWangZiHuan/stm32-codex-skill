@@ -109,6 +109,9 @@ Copy the inner `stm32-cubemx-build` directory into your Codex skills folder:
 - macOS: `~/.codex/skills/stm32-cubemx-build`
 - Windows: `%USERPROFILE%\.codex\skills\stm32-cubemx-build`
 
+On Windows, the Skill runs inside the Codex desktop app. VS Code is optional
+for viewing the generated project and source files.
+
 Then upload a board manual and ask, for example:
 
 > Use `$stm32-cubemx-build` to read this board manual and create a 400 kHz I2C
@@ -155,6 +158,9 @@ $skill = "$env:USERPROFILE\.codex\skills\stm32-cubemx-build\scripts\windows_smok
 `WINDOWS_SMOKE_PASS` reports a complete generation-and-compilation run. Flash,
 debug, and on-board measurements belong to a separate hardware run.
 
+Use [docs/windows-acceptance.md](docs/windows-acceptance.md) for the complete
+deployment and acceptance checklist.
+
 ## Result vocabulary
 
 The Skill reports results at the level it has completed:
@@ -167,7 +173,7 @@ The Skill reports results at the level it has completed:
 
 ## Validation in this release
 
-- 72 deterministic tests cover profile validation, configuration planning,
+- 73 deterministic tests cover profile validation, configuration planning,
   generation provenance, pack rendering, integration, and build preparation.
 - All six built-in pack contracts validate.
 - The current source completed an I2C flow with CubeMX generation, App module

@@ -8,7 +8,7 @@ compilation.
 
 ## Automated checks
 
-- **72 deterministic tests** exercise profile facts, manual indexing,
+- **73 deterministic tests** exercise profile facts, manual indexing,
   configuration-plan rules, pack contracts, generated-project provenance,
   module rendering, integration, and build preparation.
 - **6 pack contracts** validate: `gpio`, `i2c`, `pwm`, `spi`, `timer`, and
