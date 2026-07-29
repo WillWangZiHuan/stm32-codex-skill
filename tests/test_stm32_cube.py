@@ -1656,6 +1656,15 @@ class CubeScriptTests(unittest.TestCase):
 
             modules_makefile = project_dir / stm32_cube.MODULES_MAKEFILE
             modules_makefile.write_text(
+                modules_makefile.read_text(encoding="utf-8").replace(
+                    "Managed by the module command.",
+                    "Recreated safely by the module command.",
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(stm32_cube.load_project_provenance(project_dir)["packs"], ["gpio"])
+
+            modules_makefile.write_text(
                 modules_makefile.read_text(encoding="utf-8") + "# changed\n",
                 encoding="utf-8",
             )
