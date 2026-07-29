@@ -1,41 +1,35 @@
 # PWM pack
 
-Use this pack only after the board profile establishes the physical output pin
-and electrical constraints. Every PWM operation must also declare the
-`timing` contract defined in
-`references/configuration-plan-contract.md`. The current core proves
-frequency only for STM32F4 `TIM1`–`TIM14` using CubeMX's generated,
-unprescaled APB clock model; it stops for a custom/prescaled tree, LPTIM, or a
-different family rather than claiming an unproven PWM frequency.
+Use this pack to configure a timer PWM output and generate a duty-cycle module.
 
-The plan must include `"packs": ["pwm"]` (plus any other selected pack IDs).
-Every PWM operation must use `"pack": "pwm"`. The core accepts only
-`TIM` or `LPTIM` instance prefixes for that ownership; the local CubeMX
-database still decides the exact channel, mode, pins, and parameters. All
-manual, generated-output, and compilation checks below remain required.
-At least one explicit PWM output pin is required; a pinless timer operation
-belongs to the timer pack instead.
+## Plan requirements
 
-1. Read the board-profile evidence for the output pin and electrical load. For
-   the supported STM32F4 clock model, use the generated root `.ioc` as the
-   chip-level clock fact; do not substitute an undocumented board oscillator
-   assumption.
-2. Inspect the local CubeMX timer mode XML for the exact timer instance and
-   channel. Names vary by IP version; for example, one F4 configuration uses
-   `PWM Generation1 CH1`, not a guessed generic string.
-3. Build a plan with `Prescaler`, `Period`, and the channel's pulse parameter
-   only after checking the installed configuration XML. Attach one
-   generated-file `verification` to every parameter, then include
-   `timer_input_hz`, `target_hz`, `tolerance_ppm`, and the two parameter
-   names in `timing`. The core checks the generated APB frequency and exact
-   counter arithmetic after CubeMX runs; it is not enough for the source text
-   merely to contain the requested prescaler and period.
-4. In the plan's `modules` list, declare the module name, `pack: "pwm"`,
-   and the exact `TIM_HANDLE`/`TIM_CHANNEL` expected from the local CubeMX
-   output. Generate first, then run
-   `module --name <declared-name> --pack pwm` and `integrate`. Provenance is
-   written only when those planned values appear in CubeMX configuration source.
+Add `pwm` to `packs`, map the timer operation to `pack: "pwm"`, and include
+the selected output pin. Record the pin, electrical load, and relevant board
+constraints in the board profile.
 
-The template changes duty cycle only. The core proves the generated
-configuration's theoretical carrier rate; hardware measurement remains outside
-this compile-only Skill.
+Inspect the selected timer mode XML and choose the exact timer instance,
+channel, mode, prescaler, period, and pulse parameter. Attach a generated-file
+assertion to every parameter.
+
+Add this `timing` object to the operation:
+
+```json
+{
+  "timer_input_hz": 16000000,
+  "target_hz": 1000,
+  "tolerance_ppm": 0,
+  "prescaler_parameter": "Prescaler",
+  "period_parameter": "Period"
+}
+```
+
+The current rate evaluator covers STM32F4 `TIM1`–`TIM14` with CubeMX-generated
+unprescaled APB clocks. It reads the generated `.ioc` clock data and evaluates
+the exact counter arithmetic for the selected target rate.
+
+## Module bindings
+
+Declare the module name, `pack: "pwm"`, generated `TIM_HANDLE`, and
+`TIM_CHANNEL` in `modules`. Generate, render the pack module, integrate it,
+and compile. The generated API updates duty cycle for the selected channel.

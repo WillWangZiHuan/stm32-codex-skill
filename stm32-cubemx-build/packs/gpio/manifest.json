@@ -4,9 +4,9 @@
   "summary": "Configure one evidence-backed push-pull GPIO output and create an explicit HAL write/toggle module.",
   "requires": [
     "A validated board profile whose MCU matches the new project.",
-    "One manual-evidenced, available output pin, including its connected load, voltage/current constraints, polarity, and documented safe startup level.",
-    "The selected MCU's local CubeMX GPIO mode and pin XML proving the exact GPIO_Output signal; use only a direct pin assignment accepted by the installed CubeMX command interface.",
-    "A local generated-output check for the requested initial PinState whenever it is not CubeMX's observed default."
+    "One manual-evidenced, available output pin, including its connected load, voltage/current constraints, polarity, and documented startup level.",
+    "The selected MCU's local CubeMX GPIO mode and pin XML proving the exact GPIO_Output signal; use the direct pin assignment supported by the installed CubeMX command interface.",
+    "A local generated-output check for a requested initial PinState that differs from CubeMX's observed default."
   ],
   "templates": [
     "templates/gpio_output.h.tmpl",

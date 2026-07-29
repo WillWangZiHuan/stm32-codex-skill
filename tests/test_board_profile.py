@@ -48,13 +48,13 @@ class BoardProfileTests(unittest.TestCase):
     def test_valid_profile_is_accepted(self) -> None:
         board_profile.validate_profile_data(valid_profile())
 
-    def test_pin_without_evidence_is_rejected(self) -> None:
+    def test_pin_evidence_is_required(self) -> None:
         profile = valid_profile()
         profile["pins"][0].pop("evidence")  # type: ignore[index]
         with self.assertRaises(board_profile.BoardProfileError):
             board_profile.validate_profile_data(profile)
 
-    def test_evidence_without_an_anchor_is_rejected(self) -> None:
+    def test_evidence_anchor_is_required(self) -> None:
         profile = valid_profile()
         profile["mcu"]["evidence"][0].pop("anchor")  # type: ignore[index]
         with self.assertRaisesRegex(board_profile.BoardProfileError, r"mcu\.evidence\[1\]\.anchor is required"):
@@ -143,7 +143,7 @@ class BoardProfileTests(unittest.TestCase):
         self.assertEqual(index["manual"]["sha256"], hashlib.sha256(original_manual).hexdigest())
         self.assertEqual(index["pages"], [{"page": 1, "text": "Snapshot page text"}])
 
-    def test_manual_index_rejects_a_pdf_without_extractable_text(self) -> None:
+    def test_manual_index_requires_extractable_text(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             manual_path = temporary_root / "manual.pdf"
@@ -158,7 +158,7 @@ class BoardProfileTests(unittest.TestCase):
                     board_profile.index_pdf(manual_path, index_path)
             self.assertFalse(index_path.exists())
 
-    def test_manual_index_refuses_output_created_during_extraction(self) -> None:
+    def test_manual_index_preserves_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             manual_path = temporary_root / "manual.pdf"
@@ -174,12 +174,12 @@ class BoardProfileTests(unittest.TestCase):
                 "read_pdf_page_texts_from_bytes",
                 side_effect=create_competing_index,
             ):
-                with self.assertRaisesRegex(board_profile.BoardProfileError, "Refusing to overwrite existing manual index"):
+                with self.assertRaisesRegex(board_profile.BoardProfileError, "Manual index output already exists"):
                     board_profile.index_pdf(manual_path, index_path)
 
             self.assertEqual(index_path.read_text(encoding="utf-8"), "private competing index")
 
-    def test_duplicate_pin_is_rejected(self) -> None:
+    def test_profile_validates_unique_pins(self) -> None:
         profile = valid_profile()
         profile["pins"].append(profile["pins"][0])  # type: ignore[index]
         with self.assertRaises(board_profile.BoardProfileError):
@@ -190,7 +190,7 @@ class BoardProfileTests(unittest.TestCase):
         with self.assertRaises(board_profile.BoardProfileError):
             board_profile.validate_manual_index_output(Path("/private/tmp/board-index.json"))
 
-    def test_manual_validation_rejects_an_anchor_absent_from_its_cited_page(self) -> None:
+    def test_manual_validation_checks_anchor_on_its_cited_page(self) -> None:
         profile = valid_profile()
         for evidence_owner in [profile["mcu"], *profile["pins"], *profile["clocks"]]:  # type: ignore[index]
             evidence_owner["evidence"][0]["page"] = 1  # type: ignore[index]
@@ -214,7 +214,7 @@ class BoardProfileTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     board_profile.BoardProfileError,
-                    r"mcu\.evidence\[1\]\.anchor does not occur on cited manual page 1",
+                    r"mcu\.evidence\[1\]\.anchor is absent from cited manual page 1",
                 ):
                     board_profile.load_and_validate_profile(profile_path, manual_path)
 

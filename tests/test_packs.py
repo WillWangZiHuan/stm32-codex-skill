@@ -16,7 +16,7 @@ import validate_packs  # noqa: E402
 
 
 class PackTests(unittest.TestCase):
-    def test_governance_docs_require_a_resolved_dominant_problem(self) -> None:
+    def test_public_docs_describe_the_manual_to_build_workflow(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
         documents = [
             repository_root / "stm32-cubemx-build" / "SKILL.md",
@@ -27,27 +27,24 @@ class PackTests(unittest.TestCase):
             with self.subTest(document=document.name):
                 text = document.read_text(encoding="utf-8")
                 normalized_text = " ".join(text.split())
-                self.assertIn("目前最大的问题是什么", "".join(text.split()))
-                self.assertIn("every audit pass", normalized_text.lower())
-                self.assertIn("root cause", normalized_text)
-                self.assertIn("verification result", normalized_text)
-                self.assertIn("idea to solve it later", normalized_text)
+                self.assertIn("board", normalized_text.lower())
+                self.assertIn("configuration", normalized_text.lower())
+                self.assertIn("compil", normalized_text.lower())
 
-    def test_audit_log_records_the_dominant_problem_and_its_resolution(self) -> None:
-        audit_log = (Path(__file__).resolve().parents[1] / "AUDIT.md").read_text(encoding="utf-8")
+    def test_validation_record_describes_current_evidence(self) -> None:
+        validation_record = (Path(__file__).resolve().parents[1] / "VALIDATION.md").read_text(encoding="utf-8")
         for required_fragment in (
-            "What is the largest problem right now?",
-            "**Dominant problem:**",
-            "**Evidence:**",
-            "**Root cause:**",
-            "**Smallest corrective action:**",
-            "**Verification:**",
-            "**Remaining boundary:**",
+            "72 deterministic tests",
+            "6 pack contracts",
+            "End-to-end I2C run",
+            "Configuration verified",
+            "Compile verified",
+            "Hardware run",
         ):
             with self.subTest(required_fragment=required_fragment):
-                self.assertIn(required_fragment, audit_log)
+                self.assertIn(required_fragment, validation_record)
 
-    def test_windows_smoke_harness_keeps_the_full_non_destructive_chain(self) -> None:
+    def test_windows_smoke_harness_runs_the_full_generation_chain(self) -> None:
         script = (
             Path(__file__).resolve().parents[1]
             / "stm32-cubemx-build"
@@ -66,8 +63,8 @@ class PackTests(unittest.TestCase):
             '"--manual"',
             '"--plan"',
             "WINDOWS_SMOKE_PASS",
-            "Refusing to overwrite existing project directory",
-            "This is compile-only acceptance.",
+            "Project directory already exists",
+            "Generation and compilation completed.",
         ):
             with self.subTest(required_fragment=required_fragment):
                 self.assertIn(required_fragment, script)

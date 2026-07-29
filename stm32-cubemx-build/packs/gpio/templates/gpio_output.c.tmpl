@@ -7,7 +7,7 @@ void {{MODULE_NAME}}_init(void)
 
 void {{MODULE_NAME}}_process(void)
 {
-  /* Keep this hook non-blocking; write only when application logic decides. */
+  /* Schedule output updates from the application flow that owns the device behavior. */
 }
 
 void {{MODULE_NAME}}_write(GPIO_PinState state)

@@ -129,7 +129,7 @@ class CubeScriptTests(unittest.TestCase):
         self.assertTrue(stm32_cube.cubemx_refname_matches_mcu("STM32F401R(D-E)Tx", "STM32F401RETx"))
         self.assertTrue(stm32_cube.cubemx_refname_matches_mcu("STM32X(G-E)Tx", "STM32XFTx"))
 
-    def test_rejects_mcu_command_injection(self) -> None:
+    def test_mcu_identifier_blocks_command_injection(self) -> None:
         with self.assertRaises(ValueError):
             stm32_cube.validated_mcu_identifier("STM32F401RETx\nexit")
 
@@ -232,7 +232,7 @@ class CubeScriptTests(unittest.TestCase):
         self.assertEqual(arguments.cubeide, str(cubeide))
         self.assertTrue(arguments.strict)
 
-    def test_doctor_rejects_an_invalid_explicit_tool_path(self) -> None:
+    def test_doctor_reports_an_invalid_explicit_tool_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             missing_cubemx = Path(temporary_directory) / "missing" / "STM32CubeMX.exe"
             stderr = io.StringIO()
@@ -248,7 +248,7 @@ class CubeScriptTests(unittest.TestCase):
             ):
                 self.assertEqual(stm32_cube.main(), 2)
 
-        self.assertIn("STM32CubeMX override does not exist", stderr.getvalue())
+        self.assertIn("Set STM32CubeMX override to an existing executable path", stderr.getvalue())
 
     def test_script_places_project_under_output_directory(self) -> None:
         script = stm32_cube.cubemx_script("STM32F401RETx", "demo", Path("/tmp/output"))
@@ -257,7 +257,7 @@ class CubeScriptTests(unittest.TestCase):
         self.assertIn('project toolchain "Makefile"', script)
         self.assertNotIn('project path "/tmp/output/demo"', script)
 
-    def test_generate_rejects_the_evidence_chain_bypass(self) -> None:
+    def test_generate_requires_the_manual_profile_plan_chain(self) -> None:
         arguments = stm32_cube.argparse.Namespace(
             name="demo",
             mcu="STM32F401RETx",
@@ -272,7 +272,7 @@ class CubeScriptTests(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             self.assertEqual(stm32_cube.run_generate(arguments), 2)
-        self.assertIn("evidence-free baseline generation is unsupported", stderr.getvalue())
+        self.assertIn("generate requires --board-profile, --manual, and --plan", stderr.getvalue())
 
         parser_stderr = io.StringIO()
         with contextlib.redirect_stderr(parser_stderr), self.assertRaises(SystemExit) as error:
@@ -407,7 +407,7 @@ class CubeScriptTests(unittest.TestCase):
                 )
             configuration["operations"][0]["mode"] = "Internal Clock"
             configuration["operations"][0]["pins"][0]["signal"] = "TIM2_CH2"
-            with self.assertRaisesRegex(ValueError, r"operations\[1\]\.pins\[1\].*does not provide"):
+            with self.assertRaisesRegex(ValueError, r"operations\[1\]\.pins\[1\].*choose a signal listed"):
                 stm32_cube.validate_operations_against_cubemx_database(
                     configuration,
                     "STM32F401RETx",
@@ -422,7 +422,7 @@ class CubeScriptTests(unittest.TestCase):
                     str(executable),
                 )
 
-    def test_generate_rejects_an_unknown_mode_before_cubemx_runs(self) -> None:
+    def test_generate_validates_mode_before_cubemx_runs(self) -> None:
         configuration = {
             "mcu": "STM32F401RETx",
             "plan_sha256": "b" * 64,
@@ -765,7 +765,7 @@ class CubeScriptTests(unittest.TestCase):
                 ],
             )
 
-    def test_configuration_plan_rejects_resources_not_owned_by_their_selected_pack(self) -> None:
+    def test_configuration_plan_validates_selected_pack_resources(self) -> None:
         operation = {
             "pack": "i2c",
             "instance": "I2C1",
@@ -793,7 +793,7 @@ class CubeScriptTests(unittest.TestCase):
         cases = [
             (
                 {**operation_plan, "packs": ["gpio"], "operations": [{**operation, "pack": "gpio"}]},
-                "does not provide peripheral instance I2C1",
+                "requires a peripheral instance prefix declared by pack gpio",
             ),
             (
                 {**operation_plan, "operations": [{key: value for key, value in operation.items() if key != "pack"}]},
@@ -803,7 +803,7 @@ class CubeScriptTests(unittest.TestCase):
                 {**operation_plan, "operations": [{**operation, "pack": "gpio"}]},
                 r"operations\[1\].pack must be selected in packs",
             ),
-            (direct_pin_plan, "does not provide direct pin signal GPIO_Output"),
+            (direct_pin_plan, "requires a direct pin signal declared by pack i2c"),
         ]
         with tempfile.TemporaryDirectory() as temporary_directory:
             plan_path = Path(temporary_directory) / "configuration-plan.json"
@@ -1064,14 +1064,14 @@ class CubeScriptTests(unittest.TestCase):
                     **valid_module,
                     "bindings": {"MODULE_NAME": "bad", "GPIO_PORT": "GPIOA", "GPIO_PIN": "GPIO_PIN_1"},
                 },
-                "derived from name",
+                    "derives from name",
             ),
             (
                 {
                     **valid_module,
                     "bindings": {"GPIO_PORT": "GPIOA); Error_Handler();", "GPIO_PIN": "GPIO_PIN_1"},
                 },
-                "GPIO_PORT must start with a letter",
+                    "GPIO_PORT with a leading letter",
             ),
         ]
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1177,7 +1177,7 @@ class CubeScriptTests(unittest.TestCase):
                 'config load "' + str(ioc_path) + '"\nproject generate\nexit\n',
             )
 
-    def test_configuration_plan_rejects_ioc_override_injection(self) -> None:
+    def test_configuration_plan_validates_ioc_override_shape(self) -> None:
         plan = {
             "schema_version": 5,
             "mcu": "STM32F401RETx",
@@ -1226,7 +1226,7 @@ class CubeScriptTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 stm32_cube.config_plan(plan_path, "STM32F401RETx", self.board_profile())
 
-    def test_configuration_plan_rejects_board_reserved_pin(self) -> None:
+    def test_configuration_plan_requires_an_available_board_pin(self) -> None:
         plan = {
             "schema_version": 5,
             "mcu": "STM32F401RETx",
@@ -1280,7 +1280,7 @@ class CubeScriptTests(unittest.TestCase):
             self.assertEqual(stm32_cube.configuration_verification_failures(project_dir, configuration), [])
             (project_dir / "demo.ioc").write_text("PA6.Signal=GPIO_Output\n", encoding="utf-8")
             failures = stm32_cube.configuration_verification_failures(project_dir, configuration)
-        self.assertEqual(failures, ["$IOC does not assign PA6 to TIM3_CH1"])
+        self.assertEqual(failures, ["$IOC expected PA6 to map to TIM3_CH1"])
 
     def test_parameter_bound_verification_is_evaluated_after_generation(self) -> None:
         configuration = {
@@ -1312,17 +1312,17 @@ class CubeScriptTests(unittest.TestCase):
             self.assertEqual(stm32_cube.configuration_verification_failures(project_dir, configuration), [])
             source_path.write_text("hi2c1.Init.ClockSpeed = 100000;\n", encoding="utf-8")
             failures = stm32_cube.configuration_verification_failures(project_dir, configuration)
-        self.assertEqual(failures, ["Src/main.c does not contain 'hi2c1.Init.ClockSpeed = 400000;'"])
+        self.assertEqual(failures, ["Src/main.c is missing 'hi2c1.Init.ClockSpeed = 400000;'"])
 
-    def test_detects_cube_command_rejection_marker(self) -> None:
+    def test_detects_cube_command_ko_marker(self) -> None:
         self.assertTrue(stm32_cube.cubemx_rejected_commands("set mode TIM3 bad\nKO\n"))
         self.assertFalse(stm32_cube.cubemx_rejected_commands("set mode TIM3 good\nOK\n"))
 
-    def test_project_name_rejects_path_characters(self) -> None:
+    def test_project_name_validates_path_characters(self) -> None:
         with self.assertRaises(ValueError):
             stm32_cube.validated_project_name("../unsafe")
 
-    def test_module_name_rejects_c_identifier_breakers(self) -> None:
+    def test_module_name_validates_c_identifier_characters(self) -> None:
         with self.assertRaises(ValueError):
             stm32_cube.validated_module_name("Motor-Control")
 
@@ -1348,7 +1348,7 @@ class CubeScriptTests(unittest.TestCase):
             self.assertLess(makefile.index("include codex-modules.mk"), makefile.index("# build the application"))
             self.assertIn("$(wildcard App/Src/*.c)", (project_dir / "codex-modules.mk").read_text(encoding="utf-8"))
 
-    def test_module_refuses_header_created_during_rendering(self) -> None:
+    def test_module_preserves_header_created_during_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             (project_dir / "Makefile").write_text(
@@ -1465,7 +1465,7 @@ class CubeScriptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"project provenance\.board_profile_sha256 is required"):
                 stm32_cube.load_project_provenance(project_dir)
 
-    def test_project_provenance_refuses_output_created_during_recording(self) -> None:
+    def test_project_provenance_preserves_output_created_during_recording(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             provenance_path = project_dir / stm32_cube.PROJECT_PROVENANCE_FILE
@@ -1475,7 +1475,7 @@ class CubeScriptTests(unittest.TestCase):
                 return {"schema_version": stm32_cube.PROJECT_PROVENANCE_SCHEMA_VERSION}
 
             with mock.patch.object(stm32_cube, "project_provenance_record", side_effect=create_competing_provenance):
-                with self.assertRaisesRegex(ValueError, "Refusing to overwrite existing project provenance"):
+                with self.assertRaisesRegex(ValueError, "Project provenance path already exists"):
                     stm32_cube.write_project_provenance(
                         project_dir,
                         {"mcu": "STM32F401RETx"},
@@ -1485,7 +1485,7 @@ class CubeScriptTests(unittest.TestCase):
 
             self.assertEqual(provenance_path.read_text(encoding="utf-8"), "private competing provenance\n")
 
-    def test_pack_module_rejects_unplanned_or_wrong_pack_and_timer_callback_conflict(self) -> None:
+    def test_pack_module_validates_plan_pack_and_timer_callback_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             (project_dir / "Makefile").write_text(
@@ -1512,7 +1512,7 @@ class CubeScriptTests(unittest.TestCase):
                     ),
                     2,
                 )
-            self.assertIn("does not declare pack module other_output", stderr.getvalue())
+            self.assertIn("must declare pack module other_output", stderr.getvalue())
             with self.assertRaisesRegex(ValueError, "not i2c"):
                 stm32_cube.pack_module_text(project_dir, "status_output", "i2c")
 
@@ -1544,10 +1544,10 @@ class CubeScriptTests(unittest.TestCase):
             timer_source.write_text(
                 "void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) { (void)htim; }\n", encoding="utf-8"
             )
-            with self.assertRaisesRegex(ValueError, "second HAL_TIM_PeriodElapsedCallback"):
+            with self.assertRaisesRegex(ValueError, "existing HAL_TIM_PeriodElapsedCallback owner"):
                 stm32_cube.pack_module_text(timer_project, "tick_dispatcher", "timer")
 
-    def test_project_provenance_rejects_planned_binding_absent_from_generated_source(self) -> None:
+    def test_project_provenance_requires_planned_bindings_in_generated_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             configuration = {
@@ -1576,7 +1576,7 @@ class CubeScriptTests(unittest.TestCase):
                     "c" * 64,
                 )
 
-    def test_project_provenance_rejects_source_or_inventory_drift(self) -> None:
+    def test_project_provenance_checks_source_and_inventory_consistency(self) -> None:
         planned_modules = [
             {
                 "name": "status_output",
@@ -1603,7 +1603,7 @@ class CubeScriptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "configuration source changed after verified generation"):
                 stm32_cube.load_project_provenance(project_dir)
 
-    def test_project_provenance_rejects_ioc_or_generator_fact_drift(self) -> None:
+    def test_project_provenance_checks_ioc_and_generator_facts(self) -> None:
         planned_modules = [
             {
                 "name": "status_output",
@@ -1630,7 +1630,7 @@ class CubeScriptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "CubeMX generator facts changed after verified generation"):
                 stm32_cube.load_project_provenance(project_dir)
 
-    def test_project_provenance_rejects_makefile_and_controlled_module_makefile_drift(self) -> None:
+    def test_project_provenance_checks_makefile_and_module_makefile_consistency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             makefile = project_dir / "Makefile"
@@ -1665,7 +1665,7 @@ class CubeScriptTests(unittest.TestCase):
             ):
                 stm32_cube.load_project_provenance(project_dir)
 
-    def test_project_provenance_rejects_generated_header_or_linker_drift(self) -> None:
+    def test_project_provenance_checks_generated_header_and_linker_consistency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             provenance_path = self.write_project_provenance(project_dir, ["gpio"])
@@ -1809,7 +1809,7 @@ class CubeScriptTests(unittest.TestCase):
             changed_build_input_discover_tools.assert_not_called()
             changed_build_input_run.assert_not_called()
 
-    def test_build_rejects_project_without_provenance_before_tool_discovery(self) -> None:
+    def test_build_requires_project_provenance_before_tool_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             (project_dir / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
@@ -1834,7 +1834,7 @@ class CubeScriptTests(unittest.TestCase):
             generated_main = project_dir / "Src" / "main.c"
             generated_main.parent.mkdir(parents=True)
             generated_main.write_text(
-                "/* GPIOZ is not a generated binding. */\n"
+                "/* GPIOZ is outside the generated binding inventory. */\n"
                 'const char *label = "GPIOY";\n'
                 "#define GPIOW GPIOA\n"
                 "/* USER CODE BEGIN 0 */\n"
@@ -1846,7 +1846,7 @@ class CubeScriptTests(unittest.TestCase):
                 "}\n",
                 encoding="utf-8",
             )
-            app_source = project_dir / "App" / "Src" / "untrusted.c"
+            app_source = project_dir / "App" / "Src" / "application_source.c"
             app_source.parent.mkdir(parents=True)
             app_source.write_text("GPIOX\n", encoding="utf-8")
 
@@ -1862,7 +1862,7 @@ class CubeScriptTests(unittest.TestCase):
         self.assertNotIn("define", identifiers)
         self.assertNotIn("void", identifiers)
 
-    def test_pack_module_rejects_provenance_without_frozen_identifier_inventory(self) -> None:
+    def test_pack_module_requires_provenance_identifier_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_dir = Path(temporary_directory)
             (project_dir / stm32_cube.PROJECT_PROVENANCE_FILE).write_text(

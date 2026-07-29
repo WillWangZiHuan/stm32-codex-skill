@@ -5,7 +5,7 @@
   "requires": [
     "A validated board profile whose MCU matches the new project and has a cited timing constraint for a requested period.",
     "The selected MCU's local CubeMX timer mode/configuration XML for the exact base-timer mode, prescaler, period, and interrupt setting.",
-    "A single identified owner for HAL_TIM_PeriodElapsedCallback so a second callback implementation is never generated."
+    "A named HAL_TIM_PeriodElapsedCallback owner that routes periodic dispatch for the project."
   ],
   "templates": [
     "templates/timer_dispatcher.h.tmpl",

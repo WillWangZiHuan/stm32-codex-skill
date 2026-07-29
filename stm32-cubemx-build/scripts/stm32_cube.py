@@ -164,11 +164,11 @@ def executable_override(value: str | None, label: str) -> Path | None:
         return None
     path = Path(value).expanduser()
     if not path.exists():
-        raise RuntimeError(f"{label} override does not exist: {path}")
+        raise RuntimeError(f"Set {label} override to an existing executable path: {path}")
     if not path.is_file():
-        raise RuntimeError(f"{label} override is not a file: {path}")
+        raise RuntimeError(f"Set {label} override to an executable file: {path}")
     if not os.access(path, os.X_OK):
-        raise RuntimeError(f"{label} override is not executable: {path}")
+        raise RuntimeError(f"Set {label} override to a file with execute permission: {path}")
     return path
 
 
@@ -236,7 +236,7 @@ def discover_tools(cubemx_override: str | None = None, cubeide_override: str | N
         cubemx_candidates, cubeide_candidates, plugin_root = windows_candidates()
         suffix = ".exe"
     else:
-        raise RuntimeError(f"Unsupported host operating system: {host}. Only macOS and Windows are in v0.1 scope.")
+        raise RuntimeError(f"v0.1 supports macOS and Windows hosts; received: {host}.")
 
     cubemx = executable_override(cubemx_override, "STM32CubeMX") or first_executable(
         [*cubemx_candidates, *(p for p in [command_path("STM32CubeMX", "STM32CubeMX.exe")] if p)]
@@ -297,7 +297,7 @@ def cubemx_database_root(cubemx_executable: str) -> Path:
             return candidate
     raise ValueError(
         "Could not locate the CubeMX MCU database next to the discovered executable. "
-        "Use a complete STM32CubeMX installation rather than guessing its configuration."
+        "Install the complete STM32CubeMX package and select its executable path."
     )
 
 
@@ -413,7 +413,7 @@ def validate_operation_modes_against_cubemx_database(
     mcu_database: Path | None = None,
     mcu_description: Path | None = None,
 ) -> None:
-    """Reject a generic or unsupported operation mode before CubeMX can create output."""
+    """Validate each operation mode against the local CubeMX database."""
     if not configuration["operations"]:
         return
     database = mcu_database or cubemx_database_root(cubemx_executable)
@@ -431,9 +431,8 @@ def validate_operation_modes_against_cubemx_database(
         known_modes = names_by_instance[instance]
         if operation["mode"] not in known_modes:
             raise ValueError(
-                f"operations[{operation_index}].mode {operation['mode']!r} is not a concrete CubeMX mode "
-                f"for {instance} on {mcu}. Use an exact leaf Name or UserName from the local CubeMX XML, "
-                "not a generic category."
+                f"operations[{operation_index}].mode {operation['mode']!r} requires a concrete CubeMX mode "
+                f"for {instance} on {mcu}. Use an exact leaf Name or UserName from the local CubeMX XML."
             )
 
 
@@ -445,7 +444,7 @@ def validate_operation_parameters_against_cubemx_database(
     mcu_database: Path | None = None,
     mcu_description: Path | None = None,
 ) -> None:
-    """Reject a parameter key absent from the selected IP's local mode database."""
+    """Validate operation parameter keys against the selected IP database."""
     if not configuration["operations"]:
         return
     database = mcu_database or cubemx_database_root(cubemx_executable)
@@ -496,7 +495,7 @@ def validate_operation_pins_against_cubemx_database(
     mcu_database: Path | None = None,
     mcu_description: Path | None = None,
 ) -> None:
-    """Reject an operation pin/signal pair absent from the selected MCU description."""
+    """Validate operation pin and signal pairs against the selected MCU."""
     if not configuration["operations"]:
         return
     database = mcu_database or cubemx_database_root(cubemx_executable)
@@ -509,12 +508,12 @@ def validate_operation_pins_against_cubemx_database(
             available_signals = pin_signals.get(pin)
             if available_signals is None:
                 raise ValueError(
-                    f"operations[{operation_index}].pins[{pin_index}].pin {pin} is not an MCU I/O pin on {mcu}."
+                    f"operations[{operation_index}].pins[{pin_index}].pin {pin} must name an MCU I/O pin on {mcu}."
                 )
             if signal not in available_signals:
                 raise ValueError(
-                    f"operations[{operation_index}].pins[{pin_index}] assigns {pin} to {signal}, "
-                    f"but the local CubeMX MCU description for {mcu} does not provide that signal on this pin."
+                    f"operations[{operation_index}].pins[{pin_index}] assigns {pin} to {signal}; "
+                    f"choose a signal listed for this pin in the local CubeMX MCU description for {mcu}."
                 )
 
 
@@ -593,26 +592,26 @@ def build_environment(toolchain: Toolchain) -> dict[str, str]:
 
 def validated_project_name(name: str) -> str:
     if not PROJECT_NAME.fullmatch(name):
-        raise ValueError("Project names must start with a letter and use only letters, numbers, underscores, or hyphens.")
+        raise ValueError("Use a project name that starts with a letter and contains letters, numbers, underscores, or hyphens.")
     return name
 
 
 def validated_mcu_identifier(mcu: str) -> str:
     if not MCU_IDENTIFIER.fullmatch(mcu):
-        raise ValueError("MCU identifiers may only use letters, numbers, parentheses, underscores, and hyphens.")
+        raise ValueError("Use an MCU identifier containing letters, numbers, parentheses, underscores, and hyphens.")
     return mcu
 
 
 def validated_module_name(name: str) -> str:
     if not MODULE_NAME.fullmatch(name):
-        raise ValueError("Module names must start with a lowercase letter and use only lowercase letters, numbers, or underscores.")
+        raise ValueError("Use a module name that starts with a lowercase letter and contains lowercase letters, numbers, or underscores.")
     return name
 
 
 def cube_quote(value: Path | str) -> str:
     text = str(value)
     if '"' in text or "\n" in text or "\r" in text:
-        raise ValueError("CubeMX paths cannot contain quotes or line breaks.")
+        raise ValueError("Use a CubeMX path free of quotes and line breaks.")
     return f'"{text}"'
 
 
@@ -654,14 +653,14 @@ def cube_plan_token(value: Any, label: str) -> str:
 def cube_plan_identifier(value: Any, label: str) -> str:
     text = plan_string(value, label)
     if not CUBE_IDENTIFIER.fullmatch(text):
-        raise ValueError(f"{label} must start with a letter and use only letters, numbers, or underscores.")
+        raise ValueError(f"Use {label} with a leading letter and letters, numbers, or underscores.")
     return text
 
 
 def generated_c_identifier(value: Any, label: str) -> str:
     identifier = cube_plan_identifier(value, label)
     if identifier in C_KEYWORDS:
-        raise ValueError(f"{label} must not be a C keyword.")
+        raise ValueError(f"Choose a {label} that differs from a C keyword.")
     return identifier
 
 
@@ -686,14 +685,14 @@ def nonnegative_plan_integer(value: Any, label: str) -> int:
 def stm32f4_timer_clock_property(mcu: str, instance: str, label: str) -> str:
     if not mcu.upper().startswith("STM32F4"):
         raise ValueError(
-            f"{label} supports frequency proof only for STM32F4 TIM instances with an unprescaled APB clock."
+            f"{label} frequency proof currently covers STM32F4 TIM instances with an unprescaled APB clock."
         )
     if instance in STM32F4_APB1_TIMER_INSTANCES:
         return "RCC.APB1Freq_Value"
     if instance in STM32F4_APB2_TIMER_INSTANCES:
         return "RCC.APB2Freq_Value"
     raise ValueError(
-        f"{label} supports frequency proof only for STM32F4 TIM1-TIM14; {instance} is unsupported."
+        f"{label} frequency proof currently covers STM32F4 TIM1-TIM14; select one of those instances."
     )
 
 
@@ -719,8 +718,8 @@ def normalized_timer_timing(
     )
     if tolerance_ppm > MAX_TIMING_TOLERANCE_PPM:
         raise ValueError(
-            f"{label}.tolerance_ppm must not exceed {MAX_TIMING_TOLERANCE_PPM}; "
-            "use an exactly representable rate or an explicitly tighter tolerance."
+            f"Use {label}.tolerance_ppm at or below {MAX_TIMING_TOLERANCE_PPM}; "
+            "choose an exactly representable rate or a tighter tolerance."
         )
     prescaler_parameter = cube_plan_identifier(
         plan_required(timing, "prescaler_parameter", f"{label}.prescaler_parameter"),
@@ -749,8 +748,8 @@ def normalized_timer_timing(
         counter_value = int(value)
         if counter_value > MAX_TIMER_COUNTER_VALUE:
             raise ValueError(
-                f"{label}.{field_name} ({parameter_name}) must not exceed "
-                f"{MAX_TIMER_COUNTER_VALUE}; the frequency-proof model uses 16-bit counter values."
+                f"Use {label}.{field_name} ({parameter_name}) at or below "
+                f"{MAX_TIMER_COUNTER_VALUE}; the frequency model uses 16-bit counter values."
             )
         counters[field_name] = counter_value
 
@@ -829,7 +828,7 @@ def require_pack_operation_instance(
 ) -> None:
     prefixes = pack_manifests[pack_id]["plan_resources"]["operation_instance_prefixes"]
     if not any(instance.startswith(prefix) for prefix in prefixes):
-        raise ValueError(f"Pack {pack_id} does not provide peripheral instance {instance} for {label}.")
+        raise ValueError(f"{label} requires a peripheral instance prefix declared by pack {pack_id}; received {instance}.")
 
 
 def require_pack_operation_pin_contract(
@@ -865,7 +864,7 @@ def require_pack_direct_pin_signal(
 ) -> None:
     allowed_signals = pack_manifests[pack_id]["plan_resources"]["direct_pin_signals"]
     if signal not in allowed_signals:
-        raise ValueError(f"Pack {pack_id} does not provide direct pin signal {signal} for {label}.")
+        raise ValueError(f"{label} requires a direct pin signal declared by pack {pack_id}; received {signal}.")
 
 
 def normalized_ioc_overrides(
@@ -894,7 +893,7 @@ def normalized_ioc_overrides(
         pack_id = resource_pack_id(override, label, pack_manifests)
         kind = plan_string(plan_required(override, "kind", f"{label}.kind"), f"{label}.kind")
         if kind not in SUPPORTED_IOC_OVERRIDE_KINDS:
-            raise ValueError(f"{label}.kind is not a supported semantic .ioc override kind: {kind}")
+            raise ValueError(f"Choose a supported semantic .ioc override kind for {label}; received {kind}.")
         if kind not in pack_manifests[pack_id]["ioc_override_kinds"]:
             raise ValueError(
                 f"{label}.kind ({kind}) is not declared by selected pack {pack_id}."
@@ -946,7 +945,7 @@ def normalized_ioc_overrides(
                 not part or not re.fullmatch(r"(?:true|false|[0-9]+)", part) for part in value_parts[1:]
             ):
                 raise ValueError(
-                    f"{label}.value must enable the NVIC entry with true followed only by local scalar fields."
+                    f"Set {label}.value to true followed by local scalar fields for the NVIC entry."
                 )
         else:
             raise AssertionError(f"Unhandled supported .ioc override kind: {kind}")
@@ -1021,7 +1020,7 @@ def normalized_planned_modules(
             if not isinstance(raw_key, str) or not TEMPLATE_TOKEN_NAME.fullmatch(raw_key):
                 raise ValueError(f"{module_label}.bindings names must use uppercase letters, numbers, or underscores.")
             if raw_key in CORE_TEMPLATE_BINDINGS:
-                raise ValueError(f"{module_label}.bindings.{raw_key} is derived from name and must not be supplied.")
+                raise ValueError(f"{module_label}.bindings.{raw_key} derives from name and is added by the renderer.")
             identifier = generated_c_identifier(raw_value, f"{module_label}.bindings.{raw_key}")
             if generated_identifiers is not None and identifier not in generated_identifiers:
                 raise ValueError(
@@ -1044,7 +1043,7 @@ def normalized_planned_modules(
 
 def pack_contract_fingerprint(pack_id: str) -> str:
     if not PACK_ID.fullmatch(pack_id):
-        raise ValueError(f"{pack_id!r} is not a valid capability-pack identifier.")
+        raise ValueError(f"Use a valid capability-pack identifier; received {pack_id!r}.")
     pack_dir = PACKS_ROOT / pack_id
     try:
         manifest = validate_pack(pack_dir)
@@ -1124,7 +1123,7 @@ def generated_configuration_source_fingerprint(project_dir: Path) -> str:
 def managed_modules_makefile_text() -> str:
     return "\n".join(
         [
-            "# Generated by STM32 Project Builder. Recreated safely by the module command.",
+            "# Generated by STM32 Project Builder. Managed by the module command.",
             "CODEX_APP_SOURCES := $(wildcard App/Src/*.c)",
             "C_SOURCES += $(CODEX_APP_SOURCES)",
             "C_INCLUDES += -IApp/Inc",
@@ -1162,7 +1161,7 @@ def generated_makefile_baseline_text(project_dir: Path) -> str:
     if begin_count == 0 and end_count == 0:
         if modules_makefile.exists():
             raise ValueError(
-                "Codex module Makefile exists without the controlled Makefile integration block."
+                "Codex module Makefile requires the matching managed integration block."
             )
         return original
     if begin_count != 1 or end_count != 1:
@@ -1220,7 +1219,7 @@ def makefile_assignment_words(makefile_text: str, variable: str, *, required: bo
             segment = lines[line_index]
         line_index += 1
     if required and not found:
-        raise ValueError(f"CubeMX Makefile does not declare required {variable} build inputs.")
+        raise ValueError(f"CubeMX Makefile must declare required {variable} build inputs.")
     return " ".join(values).split()
 
 
@@ -1231,7 +1230,7 @@ def safe_makefile_build_path(project_dir: Path, value: str, label: str) -> Path:
         or not RELATIVE_PROJECT_FILE.fullmatch(value)
         or any(part in {".", ".."} for part in relative_path.parts)
     ):
-        raise ValueError(f"{label} must be a safe relative generated-project path.")
+        raise ValueError(f"Use {label} as a relative generated-project path.")
     project_root = project_dir.resolve()
     resolved = (project_root / relative_path).resolve()
     if project_root not in resolved.parents:
@@ -1247,7 +1246,7 @@ def generated_build_input_paths(project_dir: Path) -> list[Path]:
 
     def add(path: Path, label: str) -> None:
         if not path.is_file():
-            raise ValueError(f"{label} does not exist as a generated project file: {path}")
+            raise ValueError(f"Expected generated project file for {label}: {path}")
         resolved = path.resolve()
         if project_root not in resolved.parents:
             raise ValueError(f"{label} escapes the generated project directory.")
@@ -1279,7 +1278,7 @@ def generated_build_input_paths(project_dir: Path) -> list[Path]:
             )
             if not include_directory.is_dir():
                 raise ValueError(
-                    f"CubeMX Makefile {variable} entry is not a generated include directory: {include_directory}"
+                    f"CubeMX Makefile {variable} entry must identify a generated include directory: {include_directory}"
                 )
             for candidate in include_directory.rglob("*"):
                 if candidate.is_file():
@@ -1360,7 +1359,7 @@ def write_project_provenance(
         with provenance_path.open("x", encoding="utf-8") as output:
             output.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
     except FileExistsError as error:
-        raise ValueError(f"Refusing to overwrite existing project provenance: {provenance_path}") from error
+        raise ValueError(f"Project provenance path already exists: {provenance_path}") from error
     return provenance_path
 
 
@@ -1509,7 +1508,7 @@ def load_project_provenance(project_dir: Path) -> dict[str, Any]:
             f"project provenance.packs[{pack_index}].id",
         )
         if not PACK_ID.fullmatch(pack_id):
-            raise ValueError(f"project provenance.packs[{pack_index}].id is not a valid capability-pack identifier.")
+            raise ValueError(f"Use a valid project provenance pack identifier at packs[{pack_index}].id.")
         if pack_id in seen:
             raise ValueError(f"project provenance.packs repeats capability pack {pack_id}.")
         expected_fingerprint = plan_string(
@@ -1554,7 +1553,7 @@ def normalized_plan_verification(raw_verification: Any, label: str) -> dict[str,
     if file_name != IOC_VERIFICATION_FILE and (
         Path(file_name).is_absolute() or not RELATIVE_PROJECT_FILE.fullmatch(file_name) or ".." in Path(file_name).parts
     ):
-        raise ValueError(f"{label}.file must be $IOC or a safe relative project path.")
+        raise ValueError(f"Use {label}.file as $IOC or a relative project path.")
     contains = plan_string(
         plan_required(verification, "contains", f"{label}.contains"),
         f"{label}.contains",
@@ -1567,7 +1566,7 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
         raw_bytes = plan_path.read_bytes()
         raw = json.loads(raw_bytes)
     except FileNotFoundError as error:
-        raise ValueError(f"Configuration plan does not exist: {plan_path}") from error
+        raise ValueError(f"Configuration plan path is missing: {plan_path}") from error
     except json.JSONDecodeError as error:
         raise ValueError(f"Configuration plan is not valid JSON: {plan_path}: {error.msg}") from error
     plan = plan_object(raw, "configuration plan")
@@ -1683,7 +1682,7 @@ def config_plan(plan_path: Path, expected_mcu: str, board_profile: dict[str, Any
                 normalized_parameters,
             )
         elif "timing" in operation:
-            raise ValueError(f"{operation_label}.timing is allowed only for pwm or timer operations.")
+            raise ValueError(f"Use {operation_label}.timing with a pwm or timer operation.")
         require_pack_operation_pin_contract(
             pack_id,
             instance,
@@ -1889,7 +1888,7 @@ def run_cubemx_quiet_script(toolchain: Toolchain, output_dir: Path, project_name
 
 
 def cubemx_rejected_commands(output: str) -> bool:
-    """Return true only for CubeMX CLI's standalone command-rejection marker."""
+    """Return true for CubeMX CLI's standalone KO command marker."""
     return any(line.strip() == "KO" for line in output.splitlines())
 
 
@@ -1908,7 +1907,7 @@ def generated_pin_verification_failures(project_dir: Path, configuration: dict[s
         signal = assignment["signal"]
         expected = re.compile(rf"^{re.escape(pin)}\.Signal=(?:S_)?{re.escape(signal)}$", re.MULTILINE)
         if not expected.search(ioc_content):
-            failures.append(f"$IOC does not assign {pin} to {signal}")
+            failures.append(f"$IOC expected {pin} to map to {signal}")
     return failures
 
 
@@ -1940,10 +1939,10 @@ def timer_timing_verification_failures(project_dir: Path, configuration: dict[st
         peripheral_hz = ioc_frequency_property_value(ioc_content, clock_property)
         label = f"operations[{operation_index}].timing"
         if hclk_hz is None:
-            failures.append(f"{label} cannot prove generated RCC.AHBFreq_Value.")
+            failures.append(f"{label} is missing generated RCC.AHBFreq_Value.")
             continue
         if peripheral_hz is None:
-            failures.append(f"{label} cannot prove generated {clock_property}.")
+            failures.append(f"{label} is missing generated {clock_property}.")
             continue
         if peripheral_hz != hclk_hz:
             failures.append(
@@ -1953,7 +1952,7 @@ def timer_timing_verification_failures(project_dir: Path, configuration: dict[st
             continue
         if timing["timer_input_hz"] != peripheral_hz:
             failures.append(
-                f"{label}.timer_input_hz={timing['timer_input_hz']} does not match "
+                f"{label}.timer_input_hz={timing['timer_input_hz']} differs from "
                 f"generated {clock_property}={peripheral_hz}."
             )
             continue
@@ -1988,7 +1987,7 @@ def configuration_verification_failures(project_dir: Path, configuration: dict[s
             continue
         content = target.read_text(encoding="utf-8", errors="replace")
         if verification["contains"] not in content:
-            failures.append(f"{verification['file']} does not contain {verification['contains']!r}")
+            failures.append(f"{verification['file']} is missing {verification['contains']!r}")
     failures.extend(timer_timing_verification_failures(project_dir, configuration))
     return failures
 
@@ -1998,10 +1997,7 @@ def run_generate(args: argparse.Namespace) -> int:
         name = validated_project_name(args.name)
         mcu = validated_mcu_identifier(args.mcu)
         if not all((args.board_profile, args.manual, args.plan)):
-            raise ValueError(
-                "Manual-driven generation requires --board-profile, --manual, and --plan; "
-                "evidence-free baseline generation is unsupported."
-            )
+            raise ValueError("generate requires --board-profile, --manual, and --plan.")
         profile_path = Path(args.board_profile).expanduser().resolve()
         manual_path = Path(args.manual).expanduser().resolve()
         board_profile, profile_snapshot = load_and_validate_profile_snapshot(profile_path, manual_path)
@@ -2023,7 +2019,7 @@ def run_generate(args: argparse.Namespace) -> int:
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     if not output_dir.is_dir():
-        print(f"Error: output directory does not exist: {output_dir}", file=sys.stderr)
+        print(f"Error: output directory is missing: {output_dir}", file=sys.stderr)
         return 2
     project_dir = output_dir / name
     script_text = cubemx_script(mcu, name, output_dir, configuration)
@@ -2046,7 +2042,7 @@ def run_generate(args: argparse.Namespace) -> int:
         print(f"CubeMX generation failed with exit code {result.returncode}.", file=sys.stderr)
         return result.returncode or 1
     if cubemx_rejected_commands(result.stdout):
-        print("CubeMX rejected one or more approved configuration commands.", file=sys.stderr)
+        print("CubeMX reported a KO marker for one or more configuration commands.", file=sys.stderr)
         return 1
     if not project_dir.is_dir():
         print("CubeMX reported success but did not create the requested project directory.", file=sys.stderr)
@@ -2070,7 +2066,7 @@ def run_generate(args: argparse.Namespace) -> int:
             print(f"CubeMX configuration reload failed with exit code {reload_result.returncode}.", file=sys.stderr)
             return reload_result.returncode or 1
         if cubemx_rejected_commands(reload_result.stdout):
-            print("CubeMX rejected one or more approved configuration reload commands.", file=sys.stderr)
+            print("CubeMX reported a KO marker for one or more configuration reload commands.", file=sys.stderr)
             return 1
 
     ioc_files = sorted(project_dir.glob("*.ioc"))
@@ -2082,7 +2078,7 @@ def run_generate(args: argparse.Namespace) -> int:
         print("Warning: no .ioc file was found at the project root.", file=sys.stderr)
     if not makefile.is_file():
         print(
-            "CubeMX created a configuration but not a Makefile project. "
+            "CubeMX output is missing a Makefile project. "
             "Install the matching STM32Cube firmware package in CubeMX, then rerun generate.",
             file=sys.stderr,
         )
@@ -2146,7 +2142,7 @@ def module_source_text(name: str) -> str:
 
 def module_template_paths(pack_id: str) -> tuple[Path, Path]:
     if not PACK_ID.fullmatch(pack_id):
-        raise ValueError(f"{pack_id!r} is not a valid capability-pack identifier.")
+        raise ValueError(f"Use a valid capability-pack identifier; received {pack_id!r}.")
     pack_dir = PACKS_ROOT / pack_id
     try:
         manifest = validate_pack(pack_dir)
@@ -2191,7 +2187,7 @@ def assert_pack_callback_boundary(project_dir: Path, pack_id: str) -> None:
             source_text = source_path.read_text(encoding="utf-8", errors="replace")
             if TIM_PERIOD_ELAPSED_CALLBACK.search(source_text):
                 raise ValueError(
-                    "Timer pack cannot add a second HAL_TIM_PeriodElapsedCallback; route through the existing owner instead."
+                    "Route timer dispatch through the existing HAL_TIM_PeriodElapsedCallback owner."
                 )
 
 
@@ -2210,7 +2206,7 @@ def pack_module_text(project_dir: Path, name: str, pack_value: Any) -> tuple[str
     declared_module = planned_module(provenance, name)
     if declared_module is None:
         raise ValueError(
-            f"Project provenance does not declare pack module {name}; "
+            f"Project provenance must declare pack module {name}; "
             "add it to configuration-plan.json and generate a fresh project."
         )
     if declared_module["pack"] != pack_id:
@@ -2273,7 +2269,7 @@ def run_module(args: argparse.Namespace) -> int:
     pack_value = getattr(args, "pack", None)
     if header_path.exists() != source_path.exists():
         print(
-            f"Error: module {name} is incomplete; refusing to overwrite only one existing module file.",
+            f"Error: module {name} has one existing module file. Use a new module name or complete the existing module.",
             file=sys.stderr,
         )
         return 2
@@ -2436,7 +2432,7 @@ def run_integrate(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 2
-    print(f"Safely integrated module into CubeMX user-code blocks: {name}")
+    print(f"Integrated module into CubeMX user-code blocks: {name}")
     return 0
 
 
@@ -2514,14 +2510,14 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("--board-profile", required=True, help="Evidence-backed board-profile.json for this manual-driven project.")
     generate.add_argument("--manual", required=True, help="Exact user-provided manual PDF cited by --board-profile.")
     generate.add_argument("--plan", required=True, help="Approved configuration-plan.json for this new project.")
-    generate.add_argument("--dry-run", action="store_true", help="Print the CubeMX script without running it.")
+    generate.add_argument("--dry-run", action="store_true", help="Print the CubeMX script.")
 
-    module = commands.add_parser("module", help="Create a safe App module and synchronize its Makefile integration.")
+    module = commands.add_parser("module", help="Create an App module and synchronize its Makefile integration.")
     module.add_argument("--project-dir", required=True, help="CubeMX-generated Makefile project directory.")
     module.add_argument("--name", required=True, help="Lowercase application module name, for example motor_control.")
     module.add_argument("--pack", help="Selected capability pack whose .h/.c templates will render this new module.")
 
-    integrate = commands.add_parser("integrate", help="Safely connect an App module to CubeMX main.c user-code regions.")
+    integrate = commands.add_parser("integrate", help="Connect an App module to CubeMX main.c user-code regions.")
     integrate.add_argument("--project-dir", required=True, help="CubeMX-generated Makefile project directory.")
     integrate.add_argument("--name", required=True, help="Existing lowercase App module name, for example motor_control.")
 

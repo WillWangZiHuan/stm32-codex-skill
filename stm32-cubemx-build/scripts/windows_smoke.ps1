@@ -84,10 +84,10 @@ function Invoke-Stm32Skill {
 
 try {
     if ($ProjectName -notmatch '^[A-Za-z][A-Za-z0-9_-]*$') {
-        throw "ProjectName must start with a letter and use only letters, numbers, underscores, or hyphens."
+        throw "Use a ProjectName that starts with a letter and contains letters, numbers, underscores, or hyphens."
     }
     if ($ModuleName -notmatch '^[a-z][a-z0-9_]*$') {
-        throw "ModuleName must start with a lowercase letter and use only lowercase letters, numbers, or underscores."
+        throw "Use a ModuleName that starts with a lowercase letter and contains lowercase letters, numbers, or underscores."
     }
     if ($Jobs -lt 0) {
         throw "Jobs must be zero or a positive integer."
@@ -95,7 +95,7 @@ try {
 
     $hasPack = -not [string]::IsNullOrWhiteSpace($Pack)
     if ($hasPack -and $Pack -notmatch '^[a-z][a-z0-9-]*$') {
-        throw "Pack must start with a lowercase letter and use only lowercase letters, numbers, or hyphens."
+        throw "Use a Pack name that starts with a lowercase letter and contains lowercase letters, numbers, or hyphens."
     }
     $null = Get-Command -Name $Python -ErrorAction Stop
 
@@ -110,7 +110,7 @@ try {
     $outputPath = Resolve-OrCreateOutputDirectory -Value $OutputDir
     $projectDir = Join-Path -Path $outputPath -ChildPath $ProjectName
     if (Test-Path -LiteralPath $projectDir) {
-        throw "Refusing to overwrite existing project directory: $projectDir. Choose a new ProjectName or OutputDir; this script never deletes it."
+        throw "Project directory already exists: $projectDir. Choose a new ProjectName or OutputDir."
     }
 
     $toolArguments = @()
@@ -151,7 +151,7 @@ try {
 
     Write-Host "WINDOWS_SMOKE_PASS"
     Write-Host "Generated and compiled project: $projectDir"
-    Write-Host "This is compile-only acceptance. No target hardware was flashed, debugged, or tested."
+    Write-Host "Generation and compilation completed. Hardware flashing, debugging, and measurement continue in a separate board run."
     exit 0
 }
 catch {

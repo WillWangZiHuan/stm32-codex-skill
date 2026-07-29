@@ -25,7 +25,7 @@ MAX_EVIDENCE_ANCHOR_CHARACTERS = 240
 
 
 class BoardProfileError(ValueError):
-    """Raised when a board profile is incomplete or cannot be evidenced."""
+    """Raised when a board profile needs additional documented facts."""
 
 
 def nonempty_string(value: Any, label: str) -> str:
@@ -80,7 +80,7 @@ def validate_evidence(value: Any, label: str) -> None:
             )
         if len(anchor) > MAX_EVIDENCE_ANCHOR_CHARACTERS:
             raise BoardProfileError(
-                f"{label}[{index}].anchor must not exceed {MAX_EVIDENCE_ANCHOR_CHARACTERS} characters."
+                f"{label}[{index}].anchor length must be at most {MAX_EVIDENCE_ANCHOR_CHARACTERS} characters."
             )
 
 
@@ -133,7 +133,7 @@ def read_profile_snapshot(path: Path) -> bytes:
     try:
         return path.read_bytes()
     except FileNotFoundError as error:
-        raise BoardProfileError(f"Board profile does not exist: {path}") from error
+        raise BoardProfileError(f"Board profile path is missing: {path}") from error
     except OSError as error:
         raise BoardProfileError(f"Could not read board profile: {path}: {error}") from error
 
@@ -198,7 +198,7 @@ def validate_profile_data(profile: dict[str, Any]) -> None:
 
 def read_manual_snapshot(path: Path) -> bytes:
     if not path.is_file():
-        raise BoardProfileError(f"Manual PDF does not exist: {path}")
+        raise BoardProfileError(f"Manual PDF path is missing: {path}")
     try:
         return path.read_bytes()
     except OSError as error:
@@ -234,12 +234,12 @@ def validate_evidence_anchors(profile: dict[str, Any], page_texts: list[str]) ->
             if not normalized_pages[page - 1]:
                 raise BoardProfileError(
                     f"{label}[{index}] cites manual page {page}, but that page has no extractable text. "
-                    "Provide a text-accessible source for this fact; do not infer it from an image."
+                    "Provide a text-accessible source for this fact."
                 )
             anchor = normalize_evidence_text(citation["anchor"])
             if anchor not in normalized_pages[page - 1]:
                 raise BoardProfileError(
-                    f"{label}[{index}].anchor does not occur on cited manual page {page}."
+                    f"{label}[{index}].anchor is absent from cited manual page {page}."
                 )
 
 
@@ -255,7 +255,7 @@ def load_and_validate_profile_snapshot(
         expected_digest = profile["board"]["manual"]["sha256"]
         actual_digest = hashlib.sha256(manual_snapshot).hexdigest()
         if actual_digest != expected_digest:
-            raise BoardProfileError("Manual SHA-256 does not match board.manual.sha256; rebuild the profile from this exact manual.")
+            raise BoardProfileError("Manual SHA-256 differs from board.manual.sha256; rebuild the profile from this exact manual.")
         page_texts = read_pdf_page_texts_from_bytes(manual_snapshot, manual_path)
         page_count = len(page_texts)
         too_large = sorted({page for page in evidence_pages(profile) if page > page_count})
@@ -276,8 +276,7 @@ def index_pdf(manual_path: Path, output_path: Path) -> None:
     page_texts = read_pdf_page_texts_from_bytes(manual_snapshot, manual_path)
     if not any(normalize_evidence_text(page_text) for page_text in page_texts):
         raise BoardProfileError(
-            "Manual PDF has no extractable text. Provide a text-accessible manual or source; "
-            "do not infer board facts from an unverified image."
+            "Manual PDF has no extractable text. Provide a text-accessible manual or source."
         )
     pages = [{"page": index, "text": page_text} for index, page_text in enumerate(page_texts, start=1)]
     payload = {
@@ -290,7 +289,7 @@ def index_pdf(manual_path: Path, output_path: Path) -> None:
         with output_path.open("x", encoding="utf-8") as output:
             output.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     except FileExistsError as error:
-        raise BoardProfileError(f"Refusing to overwrite existing manual index: {output_path}") from error
+        raise BoardProfileError(f"Manual index output already exists: {output_path}") from error
 
 
 def parser() -> argparse.ArgumentParser:

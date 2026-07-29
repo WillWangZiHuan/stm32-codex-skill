@@ -14,7 +14,7 @@ void {{MODULE_NAME}}_init(void)
 
 void {{MODULE_NAME}}_process(void)
 {
-  /* Consume {{MODULE_NAME}}_take_ticks() here without blocking the main loop. */
+  /* Schedule {{MODULE_NAME}}_take_ticks() from the main-loop application flow. */
 }
 
 bool {{MODULE_NAME}}_on_period_elapsed(TIM_HandleTypeDef *htim)

@@ -4,7 +4,7 @@
   "summary": "Configure one evidence-backed timer PWM output and create a duty-cycle module.",
   "requires": [
     "A validated board profile whose MCU matches the new project and has a cited timer-clock constraint when a frequency is requested.",
-    "One manual-evidenced, available output pin and any load, level, or safety constraint for that pin.",
+    "One manual-evidenced, available output pin and its load, level, and operating constraints.",
     "The selected MCU's local CubeMX timer mode/configuration XML for the exact PWM channel, pin signal, prescaler, period, and pulse parameters."
   ],
   "templates": [

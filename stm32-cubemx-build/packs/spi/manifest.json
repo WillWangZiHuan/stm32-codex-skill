@@ -5,7 +5,7 @@
   "requires": [
     "A validated board profile whose MCU matches the new project.",
     "Three manual-evidenced, available board pins for SCK, MISO, and MOSI, including voltage, attached-device, routing, and reservation constraints.",
-    "A cited target-device requirement for SPI clock polarity/phase, maximum clock rate, bit order, frame size, and chip-select strategy; do not infer them from a board name.",
+    "A cited target-device requirement for SPI clock polarity/phase, maximum clock rate, bit order, frame size, and chip-select strategy.",
     "The selected MCU's local CubeMX SPI mode XML for the exact instance, Full_Duplex_Master mode, SCK/MISO/MOSI signals, and approved parameters."
   ],
   "templates": [
